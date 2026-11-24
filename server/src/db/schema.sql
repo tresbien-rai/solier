@@ -325,6 +325,7 @@ CREATE TABLE IF NOT EXISTS settings (
     default_preset_id TEXT DEFAULT NULL, -- the user's default prompt preset (AP-01); NULL = the built-in prompt layer (migration 011)
     aux_model       TEXT DEFAULT NULL,   -- JSON {provider, model}: the cheap model for delegated background work (AX-01); NULL = none (migration 012)
     auto_title      INTEGER DEFAULT 1,   -- name a new chat from its first exchange (AX-02, migration 013)
+    aux_expressions INTEGER DEFAULT 0,   -- pick avatar expressions via aux model instead of main-model tags (migration 017)
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL
 );

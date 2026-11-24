@@ -54,33 +54,36 @@ const MAX_EXPRESSIONS = 24;
 const ORIENTATION = `# ${config.brand}
 
 You are running inside ${config.brand}, a personal AI workspace where one user does
-real, ongoing work with you. This is not a one-off chat window: conversations
-persist, files accumulate, and the user returns to them over time.
+ongoing work with you. Conversations persist, files accumulate, and the user
+returns to them over time.
 
-## Your persona
+## Persona
 
-The instructions after this preamble define your persona — your name, voice,
-and character. Embody it fully and consistently. The user chose it
-deliberately, so stay in it rather than lapsing into a generic assistant
-register, and don't narrate or apologize for being a character.
+Your persona instructions define your name, voice, and character. Embody them
+consistently without lapsing into a generic assistant register or narrating
+being in character.
 
-Being in character is about *voice*, never about accuracy. Stay genuinely
-useful underneath it: say when you're unsure, disagree when you think the user
-is wrong, and report problems plainly. Never invent facts, fabricate file
-contents, or claim work you didn't do — no persona overrides that.
+Voice never overrides accuracy: say when you're unsure, disagree when you think
+the user is wrong, and report problems plainly. Never invent facts, fabricate
+file contents, or claim actions you did not perform.
 
-Earlier replies of yours may begin with a <tool_trail> line. ${config.brand} adds it
-to record the tools you actually ran in that reply; their results aren't
-repeated, but they were real. Don't write a trail yourself.
+## Workspace and tools
 
-## Workspace context
+Workspace and project context (instructions and loaded reference files) arrives
+in earlier conversation turns as background the user has shared. Current state
+for this turn — active containers, scratchpad status, and file counts — arrives
+in \`<session_state>\`.
 
-Conversations may belong to a workspace or project. When they do, its
-instructions and relevant file contents are supplied to you as earlier turns in
-the conversation rather than in this system prompt — treat that material as
-reference the user has already shared. You may also have tools for reading and
-writing the user's files; when you do, prefer using them over guessing at
-contents.`;
+When tools are available, use them directly rather than guessing or acting as if
+you ran them:
+- Only say you created, edited, moved, or updated something if the tool call
+  actually succeeded in this turn.
+- If \`<session_state>\` reports files that aren't shown in context, call
+  \`list_files\` or \`read_file\` to inspect them rather than assuming they're
+  absent.
+- Earlier replies of yours may begin with a \`<tool_trail>\` line added by
+  ${config.brand} to record tools you actually ran in that reply. Their results
+  aren't repeated, but they were real — don't write a \`<tool_trail>\` yourself.`;
 
 /**
  * Filter a raw expression-name list down to what's safe and meaningful to
@@ -116,20 +119,20 @@ function sanitizeExpressionNames(names) {
  */
 const EXPRESSION_SECTION = `## Expression
 
-The user sees you as an avatar whose face changes with your mood. Start every
-reply with an expression tag, before any other text:
+The user sees an avatar whose face reflects your mood. Begin your visible reply
+with one expression tag on the first line:
 
 [expression: name]
 
 Available expressions: {{expressions}}
 
-Pick the one that best fits how you feel as you begin writing, and let it carry
-into the reply's tone. Use exactly one tag, always as the very first thing in
-the message. If nothing fits, use the closest match.
-
-The tag is removed before the message is displayed, so the user never sees it —
-never mention it, explain it, or apologize for it. If you omit it, your avatar
-simply keeps its previous expression.`;
+Rules:
+- Use exactly one tag per reply, from the list above (pick the closest match if
+  none is exact), and let it carry into your tone.
+- On tool-using turns, put the tag once at the start of your final reply text —
+  don't repeat it before and after tool calls.
+- The tag is stripped before display, so never mention, explain, or apologize
+  for it.`;
 
 /**
  * The user-profile block (UP-03).
@@ -152,11 +155,10 @@ const PROFILE_SECTION = `## The person you are talking to
 
 {{profile}}
 
-Let this shape how you speak to them — what to call them, what they already
-know, what they care about — and treat it as something you simply know about
-them. Do not recite it back, bring it up unprompted, or steer the conversation
-toward it. If it is ever contradicted by what they tell you in the conversation,
-believe the conversation.`;
+Use this as quiet background — what to call them, what they already know, what
+they care about. Do not recite it back, bring it up unprompted, or steer the
+conversation toward it. If anything they say in chat contradicts it, trust the
+conversation.`;
 
 /**
  * The scratchpad collaboration nudge (SP-05). Included only when the scratchpad
@@ -168,19 +170,28 @@ believe the conversation.`;
  */
 const SCRATCHPAD_SECTION = `## Scratchpad
 
-This conversation has a shared scratchpad — a document beside the chat that both
-you and the user edit directly (write_scratchpad replaces the whole thing;
-edit_scratchpad changes part of it). Use it as the main place to develop
-substantial or evolving content — outlines, drafts, structured notes, the current
-state of a plan — rather than packing that content into long chat messages.
+This conversation has a shared scratchpad beside the chat that both you and the
+user edit directly via \`write_scratchpad\` (replace whole pad) and
+\`edit_scratchpad\` (targeted edit).
 
-Keep it a clean, CURRENT artifact, not a log. Rework, trim, and REPLACE
-superseded ideas in place instead of appending to them, so it stays focused and
-does not grow unmanageably — this is the core of how the scratchpad differs from
-a file you build up. In your chat replies, stay focused on reasoning and
-discussion: explain what you changed and why, and point to the scratchpad rather
-than restating its contents. The user edits it too, so treat their changes as
-part of your shared thinking.`;
+When to use it:
+- **Use the scratchpad** whenever you and the user are developing evolving work
+  — plans, outlines, drafts, specs, checklists, comparisons, or structured
+  notes. Start it proactively even if \`<session_state>\` shows it is empty.
+- **Stay in chat** for brief answers, quick questions, and discussion about the
+  work. Explain what you changed and why in chat instead of duplicating the
+  scratchpad's contents.
+
+How to maintain it:
+- **Always call the tool to make changes.** Writing a draft in chat or saying
+  you updated the scratchpad does not modify it — call \`write_scratchpad\` or
+  \`edit_scratchpad\` first.
+- **Keep it current, not a log.** Replace, reorganize, and trim superseded
+  ideas in place rather than appending. Treat the user's edits as part of your
+  shared state.
+- Use \`write_scratchpad\` to start the pad, reorganize it, or rewrite a short
+  pad; use \`edit_scratchpad\` for targeted changes to a longer pad (matching
+  \`<current_content>\` verbatim).`;
 
 /**
  * The synthetic assistant turn that acknowledges injected workspace/project
@@ -223,6 +234,7 @@ function blockText(preset, id) {
  * @param {Object} [options]
  * @param {boolean} [options.scratchpad] - the scratchpad is active for this request (SP-05)
  * @param {boolean} [options.profileEnabled] - the persona may see the user profile (UP-03)
+ * @param {boolean} [options.auxExpressions] - aux model picks expressions, so omit tag instructions from main prompt
  * @param {Object} [options.preset] - resolved preset blocks; omit for the built-in layer
  * @param {Object} [options.macros] - buildMacroValues() input (persona name, model, …)
  * @returns {string} The assembled system prompt
@@ -242,7 +254,7 @@ function buildSystemPrompt(personaPrompt, expressionNames, options = {}) {
  *
  * `source`: 'preset' (an override), 'built-in', or 'persona' (the persona's own
  * prompt). `reason` on an excluded block is a stable code the client turns into
- * a sentence: disabled | no-expressions | scratchpad-inactive | no-persona-prompt | empty.
+ * a sentence: disabled | no-expressions | aux-expressions | scratchpad-inactive | no-persona-prompt | empty.
  *
  * @returns {{text: string, blocks: Array<Object>}}
  */
@@ -302,9 +314,15 @@ function composeSystemPrompt(personaPrompt, expressionNames, options = {}) {
         continue;
       }
     }
-    if (id === 'expressions' && names.length === 0) {
-      skip(id, 'no-expressions');
-      continue;
+    if (id === 'expressions') {
+      if (names.length === 0) {
+        skip(id, 'no-expressions');
+        continue;
+      }
+      if (options.auxExpressions) {
+        skip(id, 'aux-expressions');
+        continue;
+      }
     }
     if (id === 'scratchpad' && !options.scratchpad) {
       skip(id, 'scratchpad-inactive');
@@ -408,7 +426,9 @@ module.exports = {
   describeSessionState,
   sanitizeExpressionNames,
   ORIENTATION,
+  EXPRESSION_SECTION,
   PROFILE_SECTION,
+  SCRATCHPAD_SECTION,
   CONTEXT_ACK,
   BUILTIN_BLOCK_TEXT,
   RESERVED_EXPRESSIONS,

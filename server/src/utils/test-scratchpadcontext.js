@@ -64,6 +64,18 @@ function row(conversationId, userId) {
       assert.match(block, /<current_content>/);
       assert.match(block, /- nobility/);
       assert.match(block, /<recent_changes>/, 'includes the changelog');
+      assert.match(block, /\(initial content created\)/, 'summarizes initial creation instead of duplicating content');
+      assert.ok(!block.includes('+- nobility'), 'creation diff does not duplicate every line with +');
+    });
+
+    await check('subsequent edit still includes unified diff hunks in <recent_changes>', async () => {
+      const conv = dal.createConversation(userId, { title: 'edit-diff' });
+      await executeWriteScratchpad({ content: '# World\n- nobility\n- artisans' }, { userId, conversationId: conv.id, turnOrdinal: 1 });
+      await executeEditScratchpad({ old_text: 'artisans', new_text: 'merchants' }, { userId, conversationId: conv.id, turnOrdinal: 2 });
+      const block = resolveScratchpadBlock(conv.id, 3);
+      assert.match(block, /^@@ -1,3 \+1,3 @@$/m, 'shows unified diff hunk header');
+      assert.ok(block.includes('-- artisans'), 'shows deleted line in diff');
+      assert.ok(block.includes('+- merchants'), 'shows added line in diff');
     });
 
     await check('injects up to injectDiffCount recent diffs, newest first', async () => {
@@ -147,7 +159,8 @@ function row(conversationId, userId) {
       const on = buildSystemPrompt('You are a test persona.', ['neutral'], { scratchpad: true });
       assert.ok(!/## Scratchpad/.test(off), 'absent when not active');
       assert.ok(/## Scratchpad/.test(on), 'present when active');
-      assert.ok(/REPLACE/.test(on), 'carries the churn nudge');
+      assert.ok(/replace/i.test(on), 'carries the churn nudge');
+      assert.ok(on.includes('write_scratchpad') && on.includes('edit_scratchpad'), 'carries the tool-first rule');
       assert.ok(on.includes('You are a test persona.'), 'persona still appended after the base layer');
     });
 

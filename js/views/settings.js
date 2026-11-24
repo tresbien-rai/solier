@@ -382,7 +382,7 @@ const BLOCK_INFO = {
         // which is BEFORE applyBrand() hears back from the server (BR-01), so a
         // baked-in string would freeze the fallback name.
         get description() {
-            return `What ${CONFIG.brand} is, and that the text after it is a persona to embody.`;
+            return `What ${CONFIG.brand} is, how it handles persona embodiment, workspace context, and tools.`;
         },
     },
     state: {
@@ -402,7 +402,7 @@ const BLOCK_INFO = {
     expressions: {
         label: 'Expression protocol',
         description: 'How to emit [expression: name] tags.',
-        conditional: 'Sent only when the persona has expressions.',
+        conditional: 'Sent only when the persona has expressions and aux-model expressions are off.',
     },
     scratchpad: {
         label: 'Scratchpad',
@@ -970,6 +970,7 @@ export function setPersonaPresetBase(value) {
 const EXCLUSION_REASONS = {
     disabled: 'turned off in this preset',
     'no-expressions': 'the persona has no expressions',
+    'aux-expressions': 'picked by your aux model after each reply',
     'scratchpad-inactive': 'the scratchpad is off for this chat',
     'no-persona-prompt': 'the persona has no prompt text',
     'no-profile': 'you have not written a profile yet',

@@ -282,23 +282,12 @@ async function assembleChatRequest(req, containers, { systemPrompt, messages, ex
   } catch (err) {
     logger.warn({ userId, msg: err.message }, 'Could not load activeFileTurns; using default');
   }
-  const activeBlock = await resolveActiveFileBlock(userId, conversationId, currentTurn, activeFileTurns);
-  let trailingMessages = activeBlock ? appendToLastUserMessage(messages, activeBlock) : messages;
 
-  // Scratchpad (SP-02): injected in full every turn it is active + non-empty
-  // (NOT recency-windowed like active files). Gated on the same enabled flag the
-  // endpoints use to advertise the scratchpad tools, so a disabled pad neither
-  // injects nor tempts the model.
   const scratchpadEnabled = resolveScratchpadEnabled(userId, containers.conversation);
-  if (scratchpadEnabled) {
-    const scratchpadBlock = resolveScratchpadBlock(conversationId, currentTurn, config.scratchpad.injectDiffCount);
-    if (scratchpadBlock) trailingMessages = appendToLastUserMessage(trailingMessages, scratchpadBlock);
-  }
 
-  // SS-02: what exists right now — including what does NOT. Resolved after the
-  // scratchpad gate so the pad line reports the state the model is actually
-  // given, and folded into promptOptions so the inspector describes the same
-  // block the send path built rather than rebuilding it.
+  // SS-02: what exists right now — including what does NOT. Resolved before the
+  // volatile context blocks so `<session_state>` sits FIRST in the appended tail,
+  // directly above `<active_files>` and `<scratchpad>` ("current content below").
   const withState = {
     ...promptOptions,
     sessionState: buildSessionState({
@@ -309,18 +298,23 @@ async function assembleChatRequest(req, containers, { systemPrompt, messages, ex
     }),
   };
 
-  // PC-01: `<session_state>` goes in the MESSAGE layer, appended LAST so it
-  // sits directly above the `<active_files>` and scratchpad blocks it refers
-  // to ("current content below" now points at the adjacent block rather than
-  // forward past the whole conversation).
-  //
-  // The reason it is not in the system prompt: it reports the pad's length and
-  // the file counts, which the model changes by doing its job. In `system` that
-  // churn re-wrote the prefix ahead of every message, so the entire history was
-  // re-processed uncached on most turns. Here it lands in the volatile tail,
-  // after the part of the request both this turn and the next reproduce
-  // byte-for-byte (docs/design/PROMPT_CACHING_DESIGN.md, §2.1).
-  trailingMessages = appendToLastUserMessage(trailingMessages, sessionStateBlock(withState));
+  // PC-01: `<session_state>` goes in the MESSAGE layer, appended ahead of
+  // `<active_files>` and `<scratchpad>` in the volatile tail — after the part
+  // of the request both this turn and the next reproduce byte-for-byte
+  // (docs/design/PROMPT_CACHING_DESIGN.md, §2.1).
+  let trailingMessages = appendToLastUserMessage(messages, sessionStateBlock(withState));
+
+  const activeBlock = await resolveActiveFileBlock(userId, conversationId, currentTurn, activeFileTurns);
+  if (activeBlock) trailingMessages = appendToLastUserMessage(trailingMessages, activeBlock);
+
+  // Scratchpad (SP-02): injected in full every turn it is active + non-empty
+  // (NOT recency-windowed like active files). Gated on the same enabled flag the
+  // endpoints use to advertise the scratchpad tools, so a disabled pad neither
+  // injects nor tempts the model.
+  if (scratchpadEnabled) {
+    const scratchpadBlock = resolveScratchpadBlock(conversationId, currentTurn, config.scratchpad.injectDiffCount);
+    if (scratchpadBlock) trailingMessages = appendToLastUserMessage(trailingMessages, scratchpadBlock);
+  }
 
   const { system, messages: assembled } =
     assembleProviderInput(requestContext, systemPrompt, trailingMessages, expressionNames, scratchpadEnabled, withState);
@@ -453,6 +447,7 @@ function resolvePromptOptions(req, containers, model, presetOverride) {
     // passes it. The real send paths always resolve from the conversation.
     preset: presetOverride !== undefined ? presetOverride : resolvePromptPreset(userId, conversation),
     profileEnabled: resolveProfileEnabled(persona),
+    auxExpressions: resolveAuxExpressionsActive(userId),
     macros: {
       personaName: persona?.name || '',
       userName: resolveUserName(profile, dal.findUserById(userId)?.display_name),
@@ -462,6 +457,29 @@ function resolvePromptOptions(req, containers, model, presetOverride) {
       model: model || '',
     },
   };
+}
+
+/**
+ * Whether aux-model expression picking is actually active for this user:
+ * requires the opt-in toggle ON, an aux model pointing at an implemented
+ * provider, and a stored API key for that provider. Fails open (`false`) so
+ * the main model keeps declaring `[expression: name]` tags rather than leaving
+ * the avatar stuck.
+ * @param {string} userId
+ * @returns {boolean}
+ */
+function resolveAuxExpressionsActive(userId) {
+  try {
+    const settings = dal.getSettingsByUser(userId);
+    if (!settings?.auxExpressions) return false;
+    const aux = settings.auxModel;
+    if (!aux || !aux.provider || !aux.model) return false;
+    if (!providers[aux.provider]) return false;
+    return Boolean(dal.getApiKey(userId, aux.provider));
+  } catch (err) {
+    logger.warn({ userId, msg: err.message }, 'Could not resolve auxExpressions state; falling back to inline tags');
+    return false;
+  }
 }
 
 /**
@@ -1152,6 +1170,7 @@ module.exports = {
   // real loop, not a reimplementation of it.
   _runToolLoop: runToolLoop,
   resolveScratchpadEnabled,
+  resolveAuxExpressionsActive,
   // AP-01: also used by the presets API (AP-02) to preview a resolution.
   resolvePromptPreset,
   resolveAdvertisedTools,

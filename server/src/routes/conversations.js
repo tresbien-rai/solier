@@ -36,6 +36,8 @@ const { revertConversationFiles } = require('../tools/revertFiles');
 const { getProviderModule } = require('../providers/registry');
 const { getDecryptedApiKey } = require('./apiKeys');
 const { buildTitleRequest, sanitizeTitle, fallbackTitle } = require('../prompts/title');
+const { sanitizeExpressionNames } = require('../prompts/tessera');
+const { buildExpressionRequest, parseExpressionReply } = require('../prompts/expression');
 const { logger } = require('../utils/logger');
 const { formatFileRevision } = require('../utils/format');
 const { trashConversationFiles } = require('../tools/conversationCleanup');
@@ -1113,6 +1115,101 @@ router.post('/:id/title', asyncHandler(async (req, res) => {
   dal.updateConversation(req.params.id, userId, { title });
   logger.info({ userId, conversationId: req.params.id, source }, 'conversation auto-named');
   res.json({ title, source });
+}));
+
+/**
+ * POST /api/conversations/:id/expression
+ * Pick an avatar expression for the latest assistant reply using the user's
+ * aux model (Option B).
+ *
+ * Non-fatal by design: returns `{ expression, source }` with HTTP 200 even when
+ * skipped or when the aux call fails, so an avatar pose lookup never breaks a
+ * finished chat turn.
+ */
+router.post('/:id/expression', asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  const conversation = dal.getConversationMeta(req.params.id, userId);
+  if (!conversation) throw AppError.notFound('Conversation');
+
+  const settings = dal.getSettingsByUser(userId);
+  const skip = (reason) => res.json({ expression: null, source: 'skipped', reason });
+
+  if (!settings.auxExpressions) return skip('aux expressions is off');
+
+  const aux = settings.auxModel;
+  const providerModule = aux ? getProviderModule(aux.provider) : null;
+  if (!providerModule || !aux.model) return skip('no aux model configured');
+
+  const persona = conversation.persona_id
+    ? dal.getPersonaById(conversation.persona_id, userId)
+    : null;
+
+  const personaExprs = persona && persona.expressions ? Object.keys(persona.expressions) : [];
+  const rawExprs = personaExprs.length > 0 ? personaExprs : req.body?.expressionNames;
+  const expressionNames = sanitizeExpressionNames(rawExprs);
+  if (expressionNames.length === 0) return skip('no expressions');
+
+  const messages = dal.getMessagesByConversation(req.params.id, userId);
+  const recentMessages = messages
+    .map((m) => ({ role: m.role, content: messageText(m) }))
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim() !== '');
+  if (recentMessages.length === 0 || recentMessages[recentMessages.length - 1].role !== 'assistant') {
+    return skip('no assistant reply');
+  }
+
+  const personaPrompt = typeof req.body?.personaPrompt === 'string' && req.body.personaPrompt.trim()
+    ? req.body.personaPrompt
+    : (persona?.system_prompt || '');
+
+  let apiKey;
+  try {
+    apiKey = getDecryptedApiKey(userId, aux.provider);
+  } catch (err) {
+    logger.warn({ userId, provider: aux.provider, msg: err.message }, 'aux expression missing API key');
+    return skip('no API key');
+  }
+  if (!apiKey) return skip('no API key');
+
+  let picked = null;
+  try {
+    const { system, messages: exprMessages } = buildExpressionRequest({
+      personaName: persona?.name || '',
+      personaPrompt,
+      expressionNames,
+      recentMessages,
+    });
+    const data = await providerModule.chatRaw(apiKey, {
+      model: aux.model,
+      messages: exprMessages,
+      systemPrompt: system,
+      modelParams: { maxTokens: 128, temperature: 0, temperatureEnabled: true },
+    });
+
+    try {
+      const usage = providerModule.extractUsage(data);
+      if (usage) {
+        dal.addUsageEvent({
+          conversationId: req.params.id,
+          turn: null,
+          round: 0,
+          provider: aux.provider,
+          model: aux.model,
+          ...usage,
+        });
+      }
+    } catch (err) {
+      logger.warn({ userId, msg: err.message }, 'expression usage capture failed');
+    }
+
+    const rawText = providerModule.formatChatResult(data, aux.model).text;
+    picked = parseExpressionReply(rawText, expressionNames);
+  } catch (err) {
+    logger.warn({ userId, provider: aux.provider, msg: err.message }, 'aux expression generation failed');
+    return res.json({ expression: null, source: 'error' });
+  }
+
+  logger.info({ userId, conversationId: req.params.id, expression: picked || null }, 'aux expression picked');
+  res.json({ expression: picked, source: picked ? 'model' : 'none' });
 }));
 
 module.exports = router;

@@ -117,6 +117,19 @@ try {
   }
   console.log(`   ✓ catalogProviders round-trip: null → ["anthropic","google"] → null`);
 
+  if (defaultSettings.auxExpressions !== false) {
+    throw new Error(`Expected default auxExpressions=false, got ${JSON.stringify(defaultSettings.auxExpressions)}`);
+  }
+  const auxOn = dal.upsertSettings(user.id, { auxExpressions: true });
+  if (auxOn.auxExpressions !== true) {
+    throw new Error(`Expected auxExpressions=true after upsert, got ${JSON.stringify(auxOn.auxExpressions)}`);
+  }
+  const auxOff = dal.upsertSettings(user.id, { auxExpressions: false });
+  if (auxOff.auxExpressions !== false) {
+    throw new Error(`Expected auxExpressions=false after toggle off, got ${JSON.stringify(auxOff.auxExpressions)}`);
+  }
+  console.log(`   ✓ auxExpressions round-trip: false → true → false`);
+
   // Test API keys
   console.log('\n7. Testing API key operations...');
   dal.upsertApiKey(user.id, 'anthropic', 'encrypted-key-data');

@@ -432,6 +432,17 @@
                 </div>
 
                 <div class="settings-section" data-settings-tab="advanced">
+                    <h3>Avatar expressions</h3>
+                    <p class="section-note">Synced to your account.</p>
+                    <label class="checkbox-row" for="auxExpressionsToggle">
+                        <input type="checkbox" id="auxExpressionsToggle">
+                        <span>Pick expressions with the aux model</span>
+                    </label>
+                    <p class="section-note" id="auxExpressionsSource"></p>
+                    <p class="section-note">When on, expression instructions are removed from your chat model's system prompt and your aux model chooses the avatar pose after each reply.</p>
+                </div>
+
+                <div class="settings-section" data-settings-tab="advanced">
                     <h3>Prompt presets</h3>
                     <p class="section-note">Synced to your account.</p>
                     <p class="section-note">A preset overrides the platform prompt wrapped around your persona — the orientation preamble, the expression protocol, the scratchpad instructions — and the order they appear in. Blocks you don't edit keep following the built-in, so improvements to it still reach you.</p>

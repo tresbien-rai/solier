@@ -266,6 +266,7 @@ export function persistSettings() {
         catalogProviders: state.settings.catalogProviders, // Models catalog filter
         auxModel: state.settings.auxModel,                 // the cheap delegate (AX-01)
         autoTitle: state.settings.autoTitle,               // auto-name new chats (AX-02)
+        auxExpressions: Boolean(state.settings.auxExpressions), // aux-picked avatar pose
     };
     API.settings.update(settingsPayload).catch(err => {
         console.error('Failed to persist settings:', err);

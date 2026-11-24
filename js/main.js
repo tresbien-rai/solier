@@ -421,6 +421,7 @@ function hydrateSettings(settings) {
             : null;
     // AX-02: on unless the server says otherwise, matching the server default.
     state.settings.autoTitle = settings.autoTitle !== false;
+    state.settings.auxExpressions = Boolean(settings.auxExpressions);
     // The active model layer (WR-12). NULL sentinel = not yet seeded (first
     // load after the de-sync upgrade) — init() seeds it from the active
     // persona once personas are hydrated.
@@ -605,11 +606,41 @@ function syncAutoTitleSource() {
         + 'If the call fails, the opening words of your first message are used instead.';
 }
 
+/**
+ * Say how avatar expressions are currently chosen (inline main-model tags vs
+ * aux-model picking) and what is still needed if the toggle is on without a
+ * usable aux model.
+ */
+function syncAuxExpressionsSource() {
+    const el = elements.auxExpressionsSource;
+    if (!el) return;
+    if (!state.settings.auxExpressions) {
+        el.innerHTML = 'Right now your chat model declares its own mood with an <code>[expression: name]</code> tag.';
+        return;
+    }
+    const aux = state.settings.auxModel;
+    if (!aux) {
+        el.innerHTML = 'No aux model is set yet, so your chat model will keep declaring tags for now. '
+            + 'Pick an aux model in <strong>Models</strong> — a model\'s ⋯ menu → "Use as aux model".';
+        return;
+    }
+    const known = (state.settings.customModels[aux.provider] || []).find(m => m.id === aux.model);
+    const label = known ? known.name : aux.model;
+    if (!state.apiKeyStatus[aux.provider]?.hasKey) {
+        el.innerHTML = `Your aux model (<strong>${escapeHtml(label)}</strong>) has no API key configured yet, `
+            + 'so your chat model will keep declaring tags for now.';
+        return;
+    }
+    el.innerHTML = `Expressions are picked by your aux model, <strong>${escapeHtml(label)}</strong>, `
+        + 'after each reply. Its token cost appears in that chat\'s token breakdown.';
+}
+
 function updateSettingsUI() {
     // Which naming path is in use can change from the MODELS view (designating
     // an aux model), which repaints the settings surface rather than the whole
     // UI — so this belongs here as well as in updateUI().
     syncAutoTitleSource();
+    syncAuxExpressionsSource();
 
     const persona = getActivePersona();
 
@@ -655,6 +686,8 @@ async function updateUI() {
     if (elements.activeFileTurns) elements.activeFileTurns.value = state.settings.activeFileTurns;
     if (elements.autoTitleToggle) elements.autoTitleToggle.checked = state.settings.autoTitle !== false;
     syncAutoTitleSource();
+    if (elements.auxExpressionsToggle) elements.auxExpressionsToggle.checked = Boolean(state.settings.auxExpressions);
+    syncAuxExpressionsSource();
 
     // Model params are shown/edited in the per-model detail view (Slice 5), not
     // a static section here — nothing to load into on a general updateUI.
@@ -1405,6 +1438,14 @@ function setupEventListeners() {
     if (elements.autoTitleToggle) {
         elements.autoTitleToggle.addEventListener('change', () => {
             state.settings.autoTitle = elements.autoTitleToggle.checked;
+            autoSaveSettings();
+        });
+    }
+
+    if (elements.auxExpressionsToggle) {
+        elements.auxExpressionsToggle.addEventListener('change', () => {
+            state.settings.auxExpressions = elements.auxExpressionsToggle.checked;
+            syncAuxExpressionsSource();
             autoSaveSettings();
         });
     }

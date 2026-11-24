@@ -41,7 +41,7 @@ import {
     renderMessageBody,
 } from './thread.js';
 import {
-    detectExpression, setExpression, settleGeneratingExpression,
+    detectDeclaredExpression, setExpression, settleGeneratingExpression,
     stripExpressionTag, stripPrefillText, } from './expressions.js';
 import {
     buildAttachmentContentBlocks, storeAttachmentsToIndexedDB, renderAttachmentPreviews,
@@ -49,6 +49,79 @@ import {
 } from './composer.js';
 import { updateStatusBar } from '../status-bar.js';
 import { loadUsage } from '../views/usage-panel.js';
+
+// Monotonic token so a slow aux-model expression response from a previous turn
+// can never overwrite `generating` or a newer turn's expression.
+let auxExpressionSeq = 0;
+
+function shouldUseAuxExpressions() {
+    const aux = state.settings.auxModel;
+    return Boolean(state.settings.auxExpressions && aux && state.apiKeyStatus[aux.provider]?.hasKey);
+}
+
+/**
+ * Resolve the avatar pose for a completed assistant reply. Uses any expression
+ * declared inline by the main model first; otherwise delegates to the aux
+ * model when opted in, or settles `generating` back to neutral.
+ * @param {string} rawText
+ * @param {string|null} targetConvoId
+ */
+async function applyReplyExpression(rawText, targetConvoId) {
+    if (targetConvoId && state.activeConversationId !== targetConvoId) {
+        settleGeneratingExpression();
+        return;
+    }
+
+    const declared = detectDeclaredExpression(rawText);
+    if (declared) {
+        await setExpression(declared);
+        return;
+    }
+
+    if (targetConvoId && shouldUseAuxExpressions()) {
+        const convo = state.conversations[targetConvoId] || getActiveConversation();
+        const persona = (convo && convo.personaId && state.personas[convo.personaId]) || getActivePersona();
+        const expressionNames = Object.keys(persona ? persona.expressions || {} : {})
+            .filter(name => name !== CONFIG.generatingExpression);
+
+        if (expressionNames.length === 0) {
+            settleGeneratingExpression();
+            return;
+        }
+
+        const seq = ++auxExpressionSeq;
+        const personaPrompt = persona ? assemblePersonaPrompt(persona) : '';
+        (async () => {
+            let picked = null;
+            try {
+                const res = await API.conversations.expression(targetConvoId, {
+                    personaPrompt,
+                    expressionNames,
+                });
+                picked = res && res.expression ? res.expression : null;
+            } catch (err) {
+                console.warn('Aux expression request failed:', err);
+            }
+            if (seq !== auxExpressionSeq) return;
+            if (state.activeConversationId !== targetConvoId) {
+                settleGeneratingExpression();
+                return;
+            }
+            if (picked) {
+                await setExpression(picked);
+            }
+            settleGeneratingExpression();
+            loadUsage(targetConvoId).then((current) => {
+                if (!current) return;
+                state.estimatedTokens = 0;
+                updateStatusBar();
+            });
+        })();
+        return;
+    }
+
+    settleGeneratingExpression();
+}
 
 export async function rerunFromMessage(msgIndex) {
     const activeConvo = getActiveConversation();
@@ -130,6 +203,7 @@ export async function sendMessageFromText(text, attachments = []) {
 
     await appendMessage('user', text, true, null, attachments.length > 0 ? attachments : null);
     showTypingIndicator();
+    auxExpressionSeq++;
     setExpression(CONFIG.generatingExpression); // held until the response completes
 
     try {
@@ -173,9 +247,8 @@ export async function sendMessageFromText(text, attachments = []) {
                 state.currentPrefill = '';
             }
 
-            const detectedExpr = detectExpression(responseText);
-            await setExpression(detectedExpr);
             await appendMessage('assistant', responseText, true, null, responseAttachments.length > 0 ? responseAttachments : null);
+            await applyReplyExpression(responseText, state.activeConversationId);
         }
     } catch (error) {
         hideTypingIndicator();
@@ -297,6 +370,7 @@ export async function sendMessage() {
 
     await appendMessage('user', userMessage || '(attached files)', true, null, messageAtts.length > 0 ? messageAtts : null);
 
+    auxExpressionSeq++;
     if (modelConfig.modelParams.streaming) {
         // Streaming path
         showTypingIndicator();
@@ -354,12 +428,9 @@ export async function sendMessage() {
                 state.currentPrefill = '';
             }
 
-            // Detect expression from response
-            const detectedExpr = detectExpression(responseText);
-            await setExpression(detectedExpr);
-
             // Strip expression tag and display (with any generated attachments)
             await appendMessage('assistant', responseText, true, null, responseAttachments.length > 0 ? responseAttachments : null);
+            await applyReplyExpression(responseText, state.activeConversationId);
 
         } catch (error) {
             hideTypingIndicator();
@@ -679,9 +750,6 @@ export async function finalizeStreamingMessage(fullText, generatedImages = [], t
     const bubble = streamingBubble();
     if (bubble) bubble.classList.remove('streaming');
 
-    const detectedExpr = detectExpression(fullText);
-    setExpression(detectedExpr);
-
     // Strip prefill + expression tag from the persisted/displayed text.
     const prefill = state.currentPrefill;
     let cleanText = fullText;
@@ -721,6 +789,7 @@ export async function finalizeStreamingMessage(fullText, generatedImages = [], t
         state.streamingAccumulator = '';
         state.streamingGeneratedImages = [];
         state.streamingToolEvents = [];
+        settleGeneratingExpression();
         return;
     }
 
@@ -767,6 +836,8 @@ export async function finalizeStreamingMessage(fullText, generatedImages = [], t
             console.error('Failed to persist assistant message:', err);
         }
     }
+
+    await applyReplyExpression(fullText, targetConvo ? targetConvo.id : targetConvoId);
 
     state.estimatedTokens += Math.ceil(fullText.length / 4);
     updateStatusBar();

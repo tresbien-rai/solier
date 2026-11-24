@@ -364,6 +364,13 @@ const API = (function () {
         return request('POST', `/api/conversations/${encodeURIComponent(id)}/title`);
       },
       /**
+       * Pick an avatar expression for the latest reply using the user's aux
+       * model (Option B). Non-fatal: returns { expression, source }.
+       */
+      expression(id, data = {}) {
+        return request('POST', `/api/conversations/${encodeURIComponent(id)}/expression`, { body: data });
+      },
+      /**
        * Roll back model-authored file changes at/after a turn (FC-06a), before
        * re-rolling that turn. Returns { reverted, deleted, warnings }.
        */
