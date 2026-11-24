@@ -41,6 +41,12 @@ How we work (branches, verification, merging, wrap-up) lives in
 > every chat across Workspaces, Projects, and Unfiled with inline Persona identity, live
 > search/persona filters, stepped top-4/+10/`Show less` expansion, `In: <Home>` strip picker,
 > and per-group `+ New` actions). Completed UI polish pass (UIP-01…08) wrapped and §7–§9 updated.
+> 2026-11-24: shipped prompt & expression polish (#243): separated Persona vs Workspace/tools
+> framing, reordered `<session_state>` ahead of `<active_files>`/`<scratchpad>`, summarised
+> initial scratchpad creation diffs, hardened inline expression streaming across tool rounds
+> with hyphenated/last-tag-wins support and friendly scratchpad/move tool chips, and added
+> opt-in aux-model expression picking (migration 017, Settings → Advanced toggle,
+> `POST /api/conversations/:id/expression`).
 
 ---
 
@@ -229,7 +235,7 @@ the persona prompt instead of complementing it. Don't rebuild it.
 
 1. `orientation` — Solier's base framing (`prompts/tessera.js`)
 2. `profile` — the user's profile, if present and not switched off for this persona
-3. `expressions` — the expression protocol, generated from the persona's real set
+3. `expressions` — the expression protocol, generated from the persona's real set (omitted with reason `aux-expressions` when opt-in aux-model expression picking is active and an aux model + API key are configured)
 4. `scratchpad` — scratchpad instructions
 5. `persona` — position marker for the persona's own prompt, which the
    **client** assembles from six sections (`js/persona-sections.js`:
@@ -244,8 +250,9 @@ capability. Preset resolution: chat → persona → account default → built-in
 
 **Message layer** (appended to the last user turn at send time, never
 persisted): `context_ack` and `state` (`<session_state>`: workspace / project /
-scratchpad / files, always all four keys). The `state` block is plumbing — it
-can be moved but not edited or disabled.
+scratchpad / files, always all four keys, placed before `<active_files>` and
+`<scratchpad>`). The `state` block is plumbing — it can be moved but not edited
+or disabled.
 
 **Context injection:** container instructions and knowledge files (respecting
 per-file toggles), the `<available_files>` manifest (with provenance), recently
@@ -278,7 +285,7 @@ Status: ✅ shipped · 🟡 shipped, live check owed · 📐 designed, not built
 | In-app dialogs (no native dialogs) | ✅ | CD-01…04, #96–#98 | `CONFIRM_DIALOG_PLAN.md` |
 | Models tab redesign | ✅ | slices 1–8, #99–#108 | `MODELS_TAB_REDESIGN.md` |
 | Chat files explorer + uploads as working files | ✅ | CF-01, CF-01b, CF-02, #109–#111 | — |
-| Scratchpad | 🟡 | SP-01…05, #112–#116 | `SCRATCHPAD_DESIGN.md` |
+| Scratchpad | 🟡 | SP-01…05, #112–#116, #243 | `SCRATCHPAD_DESIGN.md` |
 | Context toggles (KB on/off, auto/pin/mute) | 🟡 | CT-01…06, #117–#123 | `CONTEXT_TOGGLES_DESIGN.md` |
 | Frontend refactor (`app.js` → modules) | ✅ | F-, R-, S-01, #124–#147 | `REFACTOR_PLAN.md` |
 | Advanced prompt presets + inspector | 🟡 | AP-01…06, #151–#156 | `ADVANCED_PROMPTS_PLAN.md` |
@@ -289,6 +296,7 @@ Status: ✅ shipped · 🟡 shipped, live check owed · 📐 designed, not built
 | Usage measurement | ✅ | U-01…05, #175–#179 | `USAGE_MEASUREMENT_DESIGN.md` |
 | Prompt caching | ✅ live-verified (92% hit) | PC-01, PC-02, #180–#182 | `PROMPT_CACHING_DESIGN.md` |
 | Aux model + auto chat titles | ✅ | AX-01, AX-02, #185, #186, #190 | — |
+| Prompt skeleton & expression delivery (Option A + opt-in aux Option B) | 🟡 | #243 | — |
 | Brand constant + rename to Solier | ✅ | BR-01, BR-02, #194, #228 | `PROFILE_DESIGN.md` §8 |
 | User profile (tier 1) | ✅ live-confirmed | UP-01…03, #195–#198 | `PROFILE_DESIGN.md` |
 | Answer preferences | ❌ reverted on purpose | UP-04, #199 → #200 | `PROFILE_DESIGN.md` (D3 withdrawn) |
@@ -356,6 +364,8 @@ server log and against Drive, not just from the model's reply:
   automated desktop/phone-width runs so far.
 - [ ] **Gemini 3.5+ trimmed body** (#217): one real send on `gemini-3.8-flash` (and `gemini-4-argon` if keyed) with tools off and thinking on Model default, then on Level; expect a normal reply. The body only lost fields, so low risk.
 - [ ] **UI polish visual pass on a real phone** (UIP-03…08, #233–#235, #237–#239): rail drawer & `Recent` chats list, contextual chat top bar + composer `Usage:` footer, Persona Editor 3-tab strip + Phone Strip A + Fixed-model picker, Persona card `Chat`/`Edit` actions + Workspace/Project auto-save, the 8 colour themes (`Parchment` default + tactile shadows), and the all-chats home-grouped Chats page (`In: <Home>`, filter bar, stepped expansion, group `+ New`). Verified in headless Chromium at `1280×820` and `390×844` so far.
+- [ ] **Onboard prompt skeleton & Option A expression streaming** (#243): real-key multi-round tool turn creating and editing the scratchpad (`write_scratchpad` / `edit_scratchpad`), confirming friendly tool chips, scratchpad adoption/editing, and zero mid-stream `[expression: ...]` leakage.
+- [ ] **Opt-in aux-model expressions (Option B)** (#243): real-key turn with Settings → Advanced **Avatar expressions** enabled and an aux model configured, confirming Prompt Preview excludes `expressions` (`aux-expressions`), `generating` holds until the aux pick lands, and aux usage records cleanly (including Gemini thinking aux models at `maxTokens: 128`).
 
 ### Deferred on purpose
 - **CF-02b** — PDFs as working files.
@@ -492,9 +502,10 @@ Things that cost real time. Most were silent — nothing errored.
 - `express.static` has no cache-busting: hard-refresh after CSS changes or you
   will "find" bugs that are already fixed.
 - Re-rendering a focused textarea eats the caret — build once, mutate.
-- Expression-name charset must stay in sync in three places:
-  `prompts/tessera.js`, `validateExpressionName` in `routes/avatars.js`, and the
-  client guard in `saveExpression`.
+- Expression-name charset must stay in sync in five places:
+  `prompts/tessera.js`, `prompts/expression.js`, `validateExpressionName` in
+  `routes/avatars.js`, `js/util/expression-tags.js`, and the client guard in
+  `saveExpression`.
 - Don't rename element ids for a label change — it orphans stored data
   (persona "Speech" was relabelled "Voice", id stays `speech`).
 - `normalizeBlocks` *appends* missing preset blocks on purpose; the user's order wins.
