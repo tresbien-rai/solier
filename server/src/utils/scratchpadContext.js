@@ -31,6 +31,17 @@ function whenPhrase(age) {
 }
 
 /**
+ * Whether `diff` is a pure initial creation from an empty scratchpad (a single
+ * hunk starting at `-1,0` with no later hunks). Emitting it verbatim would
+ * duplicate `<current_content>` line-for-line with `+` prefixes.
+ */
+function isCreationDiff(diff) {
+  if (typeof diff !== 'string') return false;
+  if (!/^@@ -1,0 \+1,\d+ @@\n/.test(diff)) return false;
+  return !diff.includes('\n@@ ');
+}
+
+/**
  * Build the `<scratchpad>` block for a conversation, or null when the pad is
  * absent/empty (empty-skip).
  * @param {string|null} conversationId
@@ -59,16 +70,17 @@ function resolveScratchpadBlock(conversationId, currentTurn, diffCount = config.
     .map((rev) => {
       const who = rev.author === 'user' ? 'the user' : 'you';
       const when = rev.turn == null ? '' : whenPhrase(currentTurn - rev.turn);
+      const body = isCreationDiff(rev.diff) ? '(initial content created)' : rev.diff;
       return (
         `<change by="${who}"${when ? ` when="${when}"` : ''}>\n` +
-        `${rev.diff}\n` +
+        `${body}\n` +
         `</change>`
       );
     });
 
   return [
     '<scratchpad>',
-    "The shared scratchpad's current content is below — the live state of your and the user's shared thinking. Keep developing it here (write_scratchpad / edit_scratchpad), replacing and trimming in place rather than appending. In your reply, discuss and point to it rather than restating its contents. Recent changes follow so you can see the back-and-forth.",
+    'Current shared scratchpad content (authoritative text for edit_scratchpad) and recent changes.',
     '',
     `<current_content${truncatedNote}>`,
     content,

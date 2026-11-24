@@ -108,6 +108,8 @@ export const elements = {
     activeFileTurns: document.getElementById('activeFileTurns'),
     autoTitleToggle: document.getElementById('autoTitleToggle'),
     autoTitleSource: document.getElementById('autoTitleSource'),
+    auxExpressionsToggle: document.getElementById('auxExpressionsToggle'),
+    auxExpressionsSource: document.getElementById('auxExpressionsSource'),
 
     // Expression settings
     expressionList: document.getElementById('expressionList'),

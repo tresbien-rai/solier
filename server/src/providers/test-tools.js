@@ -82,6 +82,7 @@ check('SS-04: the scratchpad tools still carry the churn principle', () => {
   assert.match(write.description, /current state/i, 'says the pad holds current state');
   assert.match(write.description, /superseded/i, 'says to delete what is superseded');
   assert.match(write.description, /empty pad is a normal starting point/i, 'does not wait to be invited');
+  assert.ok(!/create_file/i.test(write.description), 'stays decoupled from create_file when file tools are off');
 
   const edit = SCRATCHPAD_TOOL_DEFINITIONS.find((t) => t.name === 'edit_scratchpad');
   assert.match(edit.description, /exactly once unless replace_all/i, 'keeps the uniqueness rule');

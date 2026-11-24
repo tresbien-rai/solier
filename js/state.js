@@ -42,7 +42,9 @@ export const state = {
         auxModel: null,
         // Name a new chat from its first exchange (AX-02). On by default; the
         // server is the authority, this mirrors it for the Settings checkbox.
-        autoTitle: true
+        autoTitle: true,
+        // Pick avatar expressions with the aux model instead of inline tags.
+        auxExpressions: false
     },
     // Prompt presets by id (from API.presets.list). The platform prompt layer's
     // override sets — see docs/design/ADVANCED_PROMPTS_PLAN.md.

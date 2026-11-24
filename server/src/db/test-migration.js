@@ -131,6 +131,8 @@ try {
   check('002_current_model_config applied', applied.includes('002_current_model_config'));
   const settingsCols = db.prepare('PRAGMA table_info(settings)').all().map(c => c.name);
   check('settings.current_model_config column added', settingsCols.includes('current_model_config'));
+  check('017_aux_expressions applied', applied.includes('017_aux_expressions'));
+  check('settings.aux_expressions column added', settingsCols.includes('aux_expressions'));
 
   // --- Assert 003 (messages.model column) --------------------------------------
   check('003_message_model applied', applied.includes('003_message_model'));

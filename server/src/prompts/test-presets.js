@@ -53,7 +53,7 @@ function check(label, fn) {
 const PERSONA = 'You are Vela, a terse navigator.';
 const EXPRESSIONS = ['neutral', 'happy', 'wry'];
 
-/** The pre-AP-01 composition, rebuilt from its parts. */
+/** The built-in composition, rebuilt from its parts. */
 function golden({ expressions = false, scratchpad = false, persona = false } = {}) {
   let out = ORIENTATION;
   if (expressions) {
@@ -61,39 +61,48 @@ function golden({ expressions = false, scratchpad = false, persona = false } = {
 
 ## Expression
 
-The user sees you as an avatar whose face changes with your mood. Start every
-reply with an expression tag, before any other text:
+The user sees an avatar whose face reflects your mood. Begin your visible reply
+with one expression tag on the first line:
 
 [expression: name]
 
 Available expressions: ${EXPRESSIONS.join(', ')}
 
-Pick the one that best fits how you feel as you begin writing, and let it carry
-into the reply's tone. Use exactly one tag, always as the very first thing in
-the message. If nothing fits, use the closest match.
-
-The tag is removed before the message is displayed, so the user never sees it —
-never mention it, explain it, or apologize for it. If you omit it, your avatar
-simply keeps its previous expression.`;
+Rules:
+- Use exactly one tag per reply, from the list above (pick the closest match if
+  none is exact), and let it carry into your tone.
+- On tool-using turns, put the tag once at the start of your final reply text —
+  don't repeat it before and after tool calls.
+- The tag is stripped before display, so never mention, explain, or apologize
+  for it.`;
   }
   if (scratchpad) {
     out += `
 
 ## Scratchpad
 
-This conversation has a shared scratchpad — a document beside the chat that both
-you and the user edit directly (write_scratchpad replaces the whole thing;
-edit_scratchpad changes part of it). Use it as the main place to develop
-substantial or evolving content — outlines, drafts, structured notes, the current
-state of a plan — rather than packing that content into long chat messages.
+This conversation has a shared scratchpad beside the chat that both you and the
+user edit directly via \`write_scratchpad\` (replace whole pad) and
+\`edit_scratchpad\` (targeted edit).
 
-Keep it a clean, CURRENT artifact, not a log. Rework, trim, and REPLACE
-superseded ideas in place instead of appending to them, so it stays focused and
-does not grow unmanageably — this is the core of how the scratchpad differs from
-a file you build up. In your chat replies, stay focused on reasoning and
-discussion: explain what you changed and why, and point to the scratchpad rather
-than restating its contents. The user edits it too, so treat their changes as
-part of your shared thinking.`;
+When to use it:
+- **Use the scratchpad** whenever you and the user are developing evolving work
+  — plans, outlines, drafts, specs, checklists, comparisons, or structured
+  notes. Start it proactively even if \`<session_state>\` shows it is empty.
+- **Stay in chat** for brief answers, quick questions, and discussion about the
+  work. Explain what you changed and why in chat instead of duplicating the
+  scratchpad's contents.
+
+How to maintain it:
+- **Always call the tool to make changes.** Writing a draft in chat or saying
+  you updated the scratchpad does not modify it — call \`write_scratchpad\` or
+  \`edit_scratchpad\` first.
+- **Keep it current, not a log.** Replace, reorganize, and trim superseded
+  ideas in place rather than appending. Treat the user's edits as part of your
+  shared state.
+- Use \`write_scratchpad\` to start the pad, reorganize it, or rewrite a short
+  pad; use \`edit_scratchpad\` for targeted changes to a longer pad (matching
+  \`<current_content>\` verbatim).`;
   }
   if (persona) out += `\n\n---\n\n${PERSONA}`;
   return out;
@@ -348,6 +357,18 @@ check('every exclusion carries a reason', () => {
   assert.ok(blocks.every(b => b.included || b.reason), 'no unexplained exclusion');
 });
 
+check('auxExpressions omits the expressions block with reason aux-expressions', () => {
+  const off = composeSystemPrompt(PERSONA, EXPRESSIONS, { auxExpressions: false });
+  const offExpr = off.blocks.find(b => b.id === 'expressions');
+  assert.strictEqual(offExpr.included, true, 'included when auxExpressions is false');
+
+  const on = composeSystemPrompt(PERSONA, EXPRESSIONS, { auxExpressions: true });
+  const onExpr = on.blocks.find(b => b.id === 'expressions');
+  assert.strictEqual(onExpr.included, false, 'omitted when auxExpressions is true');
+  assert.strictEqual(onExpr.reason, 'aux-expressions');
+  assert.ok(!on.text.includes('## Expression'), 'expression instructions absent from prompt');
+});
+
 check('the context ack is described separately from the system layer', () => {
   assert.strictEqual(describeContextAck({}, false).reason, 'no-context');
   assert.strictEqual(describeContextAck({}, true).included, true);
@@ -536,8 +557,8 @@ check('absent session state emits nothing rather than an empty block', () => {
 
 check('no preset can put it back in the system prompt', () => {
   // The whole point of PC-01: wherever a preset claims it goes, the system
-  // prompt must not contain it. Checked against a hand-written order, which is
-  // the only way the id can still reach composeSystemPrompt.
+  // prompt must not contain the session-state payload. Checked against a
+  // hand-written order, which is the only way the id can still reach composeSystemPrompt.
   const state = '<session_state>\nWorkspace: none\n</session_state>';
   for (const order of [
     ['state', 'orientation', 'expressions', 'scratchpad', 'persona'],
@@ -545,7 +566,7 @@ check('no preset can put it back in the system prompt', () => {
     ['orientation', 'expressions', 'scratchpad', 'persona', 'state'],
   ]) {
     const text = buildSystemPrompt(PERSONA, [], { preset: { order }, sessionState: state });
-    assert.ok(!text.includes('<session_state>'), `order ${order.join(',')} kept it out of system`);
+    assert.ok(!text.includes(state) && !text.includes('Workspace: none'), `order ${order.join(',')} kept it out of system`);
   }
 });
 

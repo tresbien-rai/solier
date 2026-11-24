@@ -96,7 +96,7 @@ function isValidAuxModel(v) {
 }
 
 router.put('/', asyncHandler(async (req, res) => {
-  const { avatarSize, avatarPosition, showAvatar, customModels, currentModelConfig, activeFileTurns, catalogProviders, defaultPresetId, auxModel, autoTitle } = req.body;
+  const { avatarSize, avatarPosition, showAvatar, customModels, currentModelConfig, activeFileTurns, catalogProviders, defaultPresetId, auxModel, autoTitle, auxExpressions } = req.body;
 
   // Validate avatarSize if provided (preset name or numeric px string)
   if (avatarSize !== undefined && !isValidAvatarSize(avatarSize)) {
@@ -163,6 +163,10 @@ router.put('/', asyncHandler(async (req, res) => {
     );
   }
 
+  if (auxExpressions !== undefined && typeof auxExpressions !== 'boolean') {
+    throw AppError.validation('auxExpressions must be a boolean');
+  }
+
   // Build update data (only include fields that were provided)
   const updateData = {};
   if (avatarSize !== undefined) updateData.avatarSize = avatarSize;
@@ -175,6 +179,7 @@ router.put('/', asyncHandler(async (req, res) => {
   if (defaultPresetId !== undefined) updateData.defaultPresetId = defaultPresetId;
   if (auxModel !== undefined) updateData.auxModel = auxModel;
   if (autoTitle !== undefined) updateData.autoTitle = Boolean(autoTitle);
+  if (auxExpressions !== undefined) updateData.auxExpressions = auxExpressions;
 
   // Upsert settings
   const settings = dal.upsertSettings(req.user.userId, updateData);

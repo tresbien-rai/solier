@@ -125,14 +125,13 @@ export function renderStreamingContent() {
     const contentDiv = segments[segments.length - 1];
     if (!contentDiv) return;
 
-    const { display, pending } = streamingDisplayText();
-    const tail = pending ? '' : display.slice(streamingCutOffset(display));
+    const { display } = streamingDisplayText();
+    const tail = display.slice(streamingCutOffset(display)).trimStart();
 
     // Dots whenever the LIVE segment is still empty — which is the start of the
     // turn, and equally the wait after each tool card while the model resumes
-    // writing. `pending` means the opening text might still turn out to be an
-    // expression tag, so hold rather than flash a partial "[expre" on screen.
-    // The caret is suppressed by the same class, so the two never both show.
+    // writing (including while a leading or post-tool `[expression:...` tag is
+    // buffered). Already-visible text stays steady if a literal `[` opens mid-reply.
     if (!tail) {
         bubble.classList.add('awaiting-first-token');
         contentDiv.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
@@ -159,9 +158,9 @@ export function streamingDisplayText() {
 
 /**
  * Convert a raw-accumulator offset into DISPLAY coordinates, by cleaning the
- * prefix exactly as the live view cleans the whole text and measuring it. Safe
- * because both cleanings only remove a leading run (the prefill, then a leading
- * expression tag), so cleaning a prefix yields a prefix of the cleaned text.
+ * prefix the same way the live view cleans the whole text and measuring it. Safe
+ * because stripping the prefill and any complete expression tags in the prefix
+ * yields a prefix of the cleaned text.
  */
 export function displayOffsetFor(rawOffset) {
     let prefix = (state.streamingAccumulator || '').slice(0, rawOffset);
@@ -605,6 +604,12 @@ export function buildToolChip(att) {
         label = `Created ${name || 'a file'}`;
     } else if (att.tool === 'edit_file') {
         label = `Edited ${name || 'a file'}`;
+    } else if (att.tool === 'move_file') {
+        label = `Moved ${name || 'a file'}${att.destination ? ' to ' + escapeHtml(att.destination) : ''}`;
+    } else if (att.tool === 'write_scratchpad') {
+        label = 'Updated scratchpad';
+    } else if (att.tool === 'edit_scratchpad') {
+        label = 'Edited scratchpad';
     } else {
         label = escapeHtml(att.tool || 'Tool used');
     }

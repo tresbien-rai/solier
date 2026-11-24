@@ -16,9 +16,41 @@ import { CONFIG } from '../config.js';
 import { getActivePersona } from '../state.js';
 import { updateFloatingAvatar } from '../avatar.js';
 import { updateStatusBar } from '../status-bar.js';
-import { stripToolTrail } from '../util/tool-trail.js';
+import {
+    TAG_OPEN,
+    LEADING_EXPRESSION_TAG,
+    MAX_TAG_NAME_LENGTH,
+    isPartialExpressionTag,
+    splitLeadingExpressionTag,
+    filterStreamingExpressionTags,
+    stripExpressionTag,
+    findDeclaredExpression,
+} from '../util/expression-tags.js';
+
+export {
+    TAG_OPEN,
+    LEADING_EXPRESSION_TAG,
+    MAX_TAG_NAME_LENGTH,
+    isPartialExpressionTag,
+    splitLeadingExpressionTag,
+    filterStreamingExpressionTags,
+    stripExpressionTag,
+    findDeclaredExpression,
+};
 
 // ===== Expression Detection =====
+/**
+ * Return the expression explicitly declared in `text` (using the last valid
+ * tag if multiple rounds declared one), or `null` if none matched.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function detectDeclaredExpression(text) {
+    const persona = getActivePersona();
+    const expressions = persona ? persona.expressions : CONFIG.defaultExpressions;
+    return findDeclaredExpression(text, expressions, CONFIG.generatingExpression);
+}
+
 /**
  * Resolve the expression a response declares.
  *
@@ -32,18 +64,8 @@ import { stripToolTrail } from '../util/tool-trail.js';
  * @returns {string} The expression name to display
  */
 export function detectExpression(text) {
-    const persona = getActivePersona();
-    const expressions = persona ? persona.expressions : CONFIG.defaultExpressions;
-
-    // The generating slot is the UI's own state, so a model that declares it
-    // is ignored.
-    const tagMatch = text.match(/\[expression:\s*([\w -]+)\]/i);
-    if (tagMatch) {
-        const exprName = tagMatch[1].trim().toLowerCase();
-        if (expressions[exprName] && exprName !== CONFIG.generatingExpression) {
-            return exprName;
-        }
-    }
+    const declared = detectDeclaredExpression(text);
+    if (declared) return declared;
 
     // Nothing declared: hold the current expression, except settle the
     // transient generating state back to neutral.
@@ -60,15 +82,6 @@ export function settleGeneratingExpression() {
     if (state.currentExpression === CONFIG.generatingExpression) {
         setExpression('neutral');
     }
-}
-
-/**
- * Clean a reply's control tokens out of the text that is shown and saved:
- * expression tags, and a leading `<tool_trail>` the model copied from its own
- * history (TT-02) — saved, it would read as evidence on the next turn.
- */
-export function stripExpressionTag(text) {
-    return stripToolTrail(text.replace(/\[expression:\s*\w+\]\s*/gi, '').trim());
 }
 
 /**
@@ -96,50 +109,4 @@ export async function setExpression(exprName) {
         await updateFloatingAvatar();
         updateStatusBar();
     }
-}
-
-// A leading "[expression: name]" is a control token, not content: it must set
-// the avatar and then never reach the screen. Since chunks arrive split at
-// arbitrary boundaries, the opening of a stream can be an INCOMPLETE tag
-// ("[expr"), so we withhold display until we know whether it will close into
-// one. This matches the tag against a growing prefix of the expected shape.
-export const TAG_OPEN = '[expression:';
-
-export const LEADING_EXPRESSION_TAG = /^\[expression:\s*([\w -]+)\]\s*/i;
-
-// Stop waiting if an unclosed tag runs longer than any real name would — a
-// malformed opener must never buffer the whole response.
-export const MAX_TAG_NAME_LENGTH = 40;
-
-/**
- * Could `text` still grow into a complete leading expression tag?
- * Two phases: still typing out "[expression:" itself, or past the opener and
- * accumulating a plausible name that hasn't closed yet.
- * @param {string} text
- * @returns {boolean}
- */
-export function isPartialExpressionTag(text) {
-    const lower = text.toLowerCase();
-    if (lower.length < TAG_OPEN.length) return TAG_OPEN.startsWith(lower);
-    if (!lower.startsWith(TAG_OPEN)) return false;
-    const name = text.slice(TAG_OPEN.length);
-    // A ']' here means the full-tag regex already declined it — malformed.
-    return !name.includes(']') && name.length <= MAX_TAG_NAME_LENGTH && /^[\w -]*$/.test(name);
-}
-
-/**
- * Decide what of the stream so far is safe to render.
- * @param {string} text - Accumulated text (prefill already stripped)
- * @returns {{ display: string, expression: string|null, pending: boolean }}
- *   `pending` means "still might become a tag — render nothing yet".
- */
-export function splitLeadingExpressionTag(text) {
-    const done = text.match(LEADING_EXPRESSION_TAG);
-    if (done) {
-        return { display: text.slice(done[0].length), expression: done[1].trim().toLowerCase(), pending: false };
-    }
-    if (isPartialExpressionTag(text)) {
-        return { display: '', expression: null, pending: true };
-    }
-    return { display: text, expression: null, pending: false };
 }

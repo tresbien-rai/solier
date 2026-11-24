@@ -35,7 +35,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'create_file',
     description:
-      "Create a text file for the user. It is saved automatically in the scope this chat belongs to — you never choose a location. An existing file of the same name in that scope is overwritten; to change part of a file, prefer edit_file, which does not resend the whole content. Text formats only (markdown, code, csv, json and similar). Returns the saved name and a download link you can use in your reply.",
+      "Create or overwrite a durable text file (markdown, code, csv, json, and similar). Saved automatically in the scope this chat belongs to — you never choose a location. Overwrites any existing file of the same name in that scope; prefer edit_file for partial changes. Returns the saved name and a download link you can use in your reply.",
     input_schema: {
       type: 'object',
       properties: {
@@ -143,7 +143,7 @@ const SCRATCHPAD_TOOL_DEFINITIONS = [
   {
     name: 'write_scratchpad',
     description:
-      "Replace the ENTIRE contents of the shared scratchpad — the space you and the user develop ideas in, alongside the chat. This is where the work itself belongs: premises, cast, outlines, structure. Rewrite, reorganize and trim it in place. The pad holds the CURRENT STATE of your shared thinking, not a growing log — delete what has been superseded rather than piling new on top of old. Pass the complete new contents (an empty string clears it); the user sees the change as a diff. An empty pad is a normal starting point, not a reason to wait. Keep the pad as the clean artifact and use your reply to say what you changed and why. If it grows past working size, save it as a file instead.",
+      "Replace the entire contents of the shared scratchpad. Use this to start an empty pad (an empty pad is a normal starting point), rewrite a short pad, or reorganize and trim superseded content in place so the pad holds the current state of your work rather than a log. Pass the complete new text (or an empty string to clear it); the user sees changes as a diff.",
     input_schema: {
       type: 'object',
       properties: {
@@ -158,7 +158,7 @@ const SCRATCHPAD_TOOL_DEFINITIONS = [
   {
     name: 'edit_scratchpad',
     description:
-      "Change PART of the scratchpad without rewriting all of it. old_text must match the current pad content exactly, including whitespace and line breaks, and appear exactly once unless replace_all is true; new_text may be empty to delete the snippet. Use this for a surgical change to a larger pad, and write_scratchpad when reworking most of it. Reports how many places changed and the length before and after, so you can confirm the edit without re-reading the pad.",
+      "Replace a specific passage in the shared scratchpad without rewriting the whole document. old_text must match the pad's <current_content> verbatim (including whitespace and line breaks) and appear exactly once unless replace_all is true; new_text may be empty to delete it. Use write_scratchpad when the pad is empty or when reworking most of it.",
     input_schema: {
       type: 'object',
       properties: {

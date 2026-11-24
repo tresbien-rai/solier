@@ -79,7 +79,7 @@ function applyScratchpadWrite(conversationId, newContent, meta) {
 /** A note appended to a successful result when the pad is getting large. */
 function sizeWarning(bytes) {
   if (bytes <= config.scratchpad.warnBytes) return '';
-  return ' Note: the scratchpad is getting large — remember it is a working space to churn, not a log to grow. Trim superseded content, or if it has become a finished artifact, consider saving it as a file with create_file.';
+  return ' Note: the scratchpad is getting large — remember it is a working space to churn, not a log to grow. Consider trimming superseded sections or saving finished material as a file.';
 }
 
 /**
@@ -99,7 +99,7 @@ async function executeWriteScratchpad(input, ctx) {
   if (bytes > config.scratchpad.maxBytes) {
     const mb = (config.scratchpad.maxBytes / (1024 * 1024)).toFixed(1);
     return {
-      content: `That scratchpad content is too large (${(bytes / (1024 * 1024)).toFixed(1)}MB; limit ${mb}MB). The scratchpad is for concise working notes — trim it, or save large finished content as a file with create_file.`,
+      content: `That scratchpad content is too large (${(bytes / (1024 * 1024)).toFixed(1)}MB; limit ${mb}MB). The scratchpad is for concise working notes — trim it, or save large finished content as a file instead.`,
       isError: true,
     };
   }
@@ -163,7 +163,7 @@ async function executeEditScratchpad(input, ctx) {
   const occurrences = countOccurrences(current, input.old_text);
   if (occurrences === 0) {
     return {
-      content: 'old_text was not found in the scratchpad. It must match the current content exactly, including whitespace and line breaks.',
+      content: 'old_text was not found in the scratchpad. Match <current_content> verbatim (not <recent_changes>), including whitespace and line breaks — or use write_scratchpad to replace the pad directly.',
       isError: true,
     };
   }

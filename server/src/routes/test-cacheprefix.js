@@ -121,7 +121,11 @@ function renderMessages(messages) {
     });
 
     check('`<session_state>` is in the messages, exactly once, not in `system`', () => {
-      assert.ok(!String(full.system).includes('<session_state>'), 'absent from system');
+      assert.ok(
+        !String(full.system).includes(full.promptOptions.sessionState)
+          && !String(full.system).includes('<session_state>\n'),
+        'state block absent from system'
+      );
       const rendered = renderMessages(full.messages).join('\n');
       const hits = rendered.split('<session_state>').length - 1;
       assert.strictEqual(hits, 1, `expected one state block in messages, found ${hits}`);
@@ -132,6 +136,15 @@ function renderMessages(messages) {
       assert.strictEqual(last.role, 'user');
       const content = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
       assert.ok(content.includes('<session_state>'));
+    });
+
+    check('`<session_state>` precedes `<scratchpad>` in the last user message', () => {
+      const last = full.messages[full.messages.length - 1];
+      const content = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
+      const stateIdx = content.indexOf('<session_state>');
+      const padIdx = content.indexOf('<scratchpad>');
+      assert.ok(stateIdx !== -1 && padIdx !== -1, 'both blocks present');
+      assert.ok(stateIdx < padIdx, `<session_state> (${stateIdx}) must appear before <scratchpad> (${padIdx})`);
     });
 
     // --- Guarantee 2: the history ahead of the newest turn is reproduced ----
@@ -176,6 +189,20 @@ function renderMessages(messages) {
 
     check('`system` is unchanged across the two turns as well', () => {
       assert.strictEqual(second.system, full.system);
+    });
+
+    // --- Guarantee 3: auxExpressions omits expressions cleanly & keeps cache -
+    dal.upsertApiKey(userId, 'anthropic', 'test-encrypted-key');
+    dal.upsertSettings(userId, {
+      auxModel: { provider: 'anthropic', model: 'claude-haiku-5-5' },
+      auxExpressions: true,
+    });
+    const auxTurn1 = await assemble(turn1);
+    const auxTurn2 = await assemble(turn2);
+
+    check('auxExpressions omits ## Expression from `system` and stays byte-identical across turns', () => {
+      assert.ok(!String(auxTurn1.system).includes('## Expression'), 'expression instructions removed');
+      assert.strictEqual(auxTurn1.system, auxTurn2.system, 'system unchanged across turns');
     });
 
   } catch (err) {
