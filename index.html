@@ -120,93 +120,178 @@
             <div class="modal-overlay" id="settingsModal">
               <div class="modal-content modal-settings">
                 <div class="settings-modal-body">
-                <!-- Appearance (device-local) -->
-                <div class="settings-section" data-settings-tab="appearance">
-                    <h3>Appearance</h3>
-                    <p class="section-note">Saved on this device.</p>
-
-                    <label>Theme</label>
-                    <div class="appearance-options" id="themeOptions">
-                        <button type="button" data-theme-name="parchment">Parchment</button>
-                        <button type="button" data-theme-name="alabaster">Alabaster</button>
-                        <button type="button" data-theme-name="camellia">Camellia</button>
-                        <button type="button" data-theme-name="celadon">Celadon</button>
-                        <button type="button" data-theme-name="espresso">Espresso</button>
-                        <button type="button" data-theme-name="nocturne">Nocturne</button>
-                        <button type="button" data-theme-name="verdant">Verdant</button>
-                        <button type="button" data-theme-name="abyssal">Abyssal</button>
+                <!-- Appearance: theme & typography (device-local, UIP-09) -->
+                <div class="settings-section setting-group" data-settings-tab="appearance">
+                    <div class="setting-group-head">
+                        <h3>Appearance</h3>
+                        <span class="scope-pill">This device</span>
                     </div>
 
-                    <label>Font</label>
-                    <div class="appearance-options" id="fontFamilyOptions">
-                        <button type="button" data-font-family="inter">Inter</button>
-                        <button type="button" data-font-family="jakarta">Jakarta Sans</button>
-                        <button type="button" data-font-family="newsreader">Newsreader</button>
-                        <button type="button" data-font-family="source-serif">Source Serif</button>
-                        <button type="button" data-font-family="atkinson">Atkinson</button>
-                        <button type="button" data-font-family="jetbrains-mono">JetBrains Mono</button>
-                        <button type="button" data-font-family="system">System</button>
+                    <div class="setting-card">
+                        <div class="setting-row stacked">
+                            <div class="setting-copy">
+                                <span class="setting-label">Theme</span>
+                            </div>
+                            <div class="theme-grid-wrap" id="themeOptions">
+                                <div class="theme-row-block">
+                                    <span class="theme-row-label">Light</span>
+                                    <div class="theme-grid">
+                                        <button type="button" class="theme-tile" data-theme-name="parchment"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Parchment</span></button>
+                                        <button type="button" class="theme-tile" data-theme-name="alabaster"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Alabaster</span></button>
+                                        <button type="button" class="theme-tile" data-theme-name="camellia"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Camellia</span></button>
+                                        <button type="button" class="theme-tile" data-theme-name="celadon"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Celadon</span></button>
+                                    </div>
+                                </div>
+                                <div class="theme-row-block">
+                                    <span class="theme-row-label">Dark</span>
+                                    <div class="theme-grid">
+                                        <button type="button" class="theme-tile" data-theme-name="espresso"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Espresso</span></button>
+                                        <button type="button" class="theme-tile" data-theme-name="nocturne"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Nocturne</span></button>
+                                        <button type="button" class="theme-tile" data-theme-name="verdant"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Verdant</span></button>
+                                        <button type="button" class="theme-tile" data-theme-name="abyssal"><span class="theme-swatch" aria-hidden="true"></span><span class="ui-btn-label">Abyssal</span></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row stacked">
+                            <div class="setting-copy">
+                                <span class="setting-label">Font</span>
+                            </div>
+                            <div class="font-grid" id="fontFamilyOptions">
+                                <button type="button" class="font-tile" data-font-family="inter"><span class="ui-btn-label">Inter</span></button>
+                                <button type="button" class="font-tile" data-font-family="jakarta"><span class="ui-btn-label">Jakarta Sans</span></button>
+                                <button type="button" class="font-tile" data-font-family="newsreader"><span class="ui-btn-label">Newsreader</span></button>
+                                <button type="button" class="font-tile" data-font-family="source-serif"><span class="ui-btn-label">Source Serif</span></button>
+                                <button type="button" class="font-tile" data-font-family="atkinson"><span class="ui-btn-label">Atkinson</span></button>
+                                <button type="button" class="font-tile" data-font-family="jetbrains-mono"><span class="ui-btn-label">JetBrains Mono</span></button>
+                                <button type="button" class="font-tile" data-font-family="system"><span class="ui-btn-label">System</span></button>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <span class="setting-label">Font scope</span>
+                                <span class="setting-desc">Apply your selected font across the whole interface, or only to chat messages and documents.</span>
+                            </div>
+                            <div class="setting-control">
+                                <div class="segmented" id="fontScopeOptions">
+                                    <button type="button" data-font-scope="all"><span class="ui-btn-label">Whole app</span></button>
+                                    <button type="button" data-font-scope="chat"><span class="ui-btn-label">Chat &amp; prose</span></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Layout & workspace chrome (device-local, UIP-09) -->
+                <div class="settings-section setting-group" data-settings-tab="appearance">
+                    <div class="setting-group-head">
+                        <h3>Layout</h3>
+                        <span class="scope-pill">This device</span>
                     </div>
 
-                    <label>Font scope</label>
-                    <div class="appearance-options" id="fontScopeOptions">
-                        <button type="button" data-font-scope="all">Whole app</button>
-                        <button type="button" data-font-scope="chat">Chat &amp; prose only</button>
-                    </div>
-                    <p class="section-note">Choose whether your selected font applies across the entire interface or only to chat messages and documents.</p>
+                    <div class="setting-card">
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <span class="setting-label">Chat width</span>
+                                <span class="setting-desc">Maximum reading width for messages and the composer.</span>
+                            </div>
+                            <div class="setting-control">
+                                <div class="segmented" id="chatWidthOptions">
+                                    <button type="button" data-chat-width="narrow"><span class="ui-btn-label">Narrow</span></button>
+                                    <button type="button" data-chat-width="comfortable"><span class="ui-btn-label">Comfortable</span></button>
+                                    <button type="button" data-chat-width="wide"><span class="ui-btn-label">Wide</span></button>
+                                </div>
+                            </div>
+                        </div>
 
-                    <label>Chat width</label>
-                    <div class="appearance-options" id="chatWidthOptions">
-                        <button type="button" data-chat-width="narrow">Narrow</button>
-                        <button type="button" data-chat-width="comfortable">Comfortable</button>
-                        <button type="button" data-chat-width="wide">Wide</button>
-                    </div>
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <span class="setting-label">Recent chats</span>
+                                <span class="setting-desc">Group sidebar recents under their workspace, or list newest-first with their location.</span>
+                            </div>
+                            <div class="setting-control">
+                                <div class="segmented" id="recentStyleOptions">
+                                    <button type="button" data-recent-style="grouped"><span class="ui-btn-label">Grouped</span></button>
+                                    <button type="button" data-recent-style="flat"><span class="ui-btn-label">Flat list</span></button>
+                                </div>
+                            </div>
+                        </div>
 
-                    <label>Recent chats</label>
-                    <div class="appearance-options" id="recentStyleOptions">
-                        <button type="button" data-recent-style="grouped">Grouped by workspace</button>
-                        <button type="button" data-recent-style="flat">Flat list</button>
-                    </div>
-                    <p class="section-note">Choose whether recent chats in the sidebar are grouped under their workspace or shown newest-first with their location.</p>
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <span class="setting-label">File panel</span>
+                                <span class="setting-desc">Auto-open when the assistant edits a file, or light a dot on the Files button. Never auto-opens on phone.</span>
+                            </div>
+                            <div class="setting-control">
+                                <div class="segmented" id="filePanelModeOptions">
+                                    <button type="button" data-file-panel-mode="auto"><span class="ui-btn-label">Auto-open</span></button>
+                                    <button type="button" data-file-panel-mode="click"><span class="ui-btn-label">Manual</span></button>
+                                </div>
+                            </div>
+                        </div>
 
-                    <label>File panel</label>
-                    <div class="appearance-options" id="filePanelModeOptions">
-                        <button type="button" data-file-panel-mode="auto">Auto-open</button>
-                        <button type="button" data-file-panel-mode="click">Manual</button>
+                        <div class="setting-row row-inline-mobile">
+                            <div class="setting-copy">
+                                <label class="setting-label" for="devModeToggle">Developer mode</label>
+                                <span class="setting-desc">Adds a "view request" (⟨⟩) button to inspect the exact payload sent to the provider.</span>
+                            </div>
+                            <div class="setting-control">
+                                <input type="checkbox" role="switch" id="devModeToggle" class="setting-switch">
+                            </div>
+                        </div>
                     </div>
-                    <p class="section-note">Auto-open opens the file panel whenever the assistant creates or updates a file. Manual simply lights a dot on the Files button in the top bar. On small screens the panel never auto-opens.</p>
-
-                    <label class="checkbox-row" for="devModeToggle">
-                        <input type="checkbox" id="devModeToggle">
-                        <span>Developer mode</span>
-                    </label>
-                    <p class="section-note">Adds a "view request" (⟨⟩) button to inspect the exact payload sent to the provider.</p>
                 </div>
 
                 <!-- Accessibility (device-local) -->
-                <div class="settings-section" data-settings-tab="appearance">
-                    <h3>Accessibility</h3>
-                    <p class="section-note">Saved on this device.</p>
-
-                    <label>Sending a message</label>
-                    <div class="appearance-options" id="enterBehaviourOptions">
-                        <button type="button" data-enter-behaviour="shift">Shift+Enter sends</button>
-                        <button type="button" data-enter-behaviour="enter">Enter sends</button>
+                <div class="settings-section setting-group" data-settings-tab="appearance">
+                    <div class="setting-group-head">
+                        <h3>Accessibility</h3>
+                        <span class="scope-pill">This device</span>
                     </div>
-                    <p class="section-note">With "Shift+Enter sends" (the default) plain Enter starts a new line, which makes it harder to fire off a long message mid-thought. Choose "Enter sends" if reaching Shift is awkward.</p>
+
+                    <div class="setting-card">
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <span class="setting-label">Sending a message</span>
+                                <span class="setting-desc">With Shift+Enter (default), plain Enter starts a new line so you won't send mid-thought.</span>
+                            </div>
+                            <div class="setting-control">
+                                <div class="segmented" id="enterBehaviourOptions">
+                                    <button type="button" data-enter-behaviour="shift"><span class="ui-btn-label">Shift+Enter</span></button>
+                                    <button type="button" data-enter-behaviour="enter"><span class="ui-btn-label">Enter</span></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Files in context (server-backed, synced across devices) -->
-                <div class="settings-section" data-settings-tab="files">
-                    <h3>Files in context</h3>
-                    <p class="section-note">Synced to your account.</p>
-
-                    <label for="activeFileTurns">Keep an edited file in context for</label>
-                    <div class="active-file-turns-row">
-                        <input type="number" id="activeFileTurns" min="0" max="20" step="1" value="1">
-                        <span>turn(s) after a change</span>
+                <div class="settings-section setting-group" data-settings-tab="files">
+                    <div class="setting-group-head">
+                        <h3>Files in context</h3>
+                        <span class="scope-pill">Synced</span>
                     </div>
-                    <p class="section-note">After a file is created or edited in a chat, its full contents and the latest diff stay visible to the assistant for this many turns — so you can talk about the change without it re-reading the file. 0 turns off in-context injection (the assistant reads files on demand). Default: 1.</p>
+
+                    <div class="setting-card">
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <label class="setting-label" for="activeFileTurns">Keep edited files in context</label>
+                                <span class="setting-desc">How many turns a created or edited file stays visible to the assistant before it needs to re-read it. Set to 0 to disable. Default: 1.</span>
+                            </div>
+                            <div class="setting-control">
+                                <div class="stepper-wrap">
+                                    <div class="stepper" role="group" aria-label="Turns to keep edited files in context">
+                                        <button type="button" class="stepper-btn" id="activeFileTurnsDec" aria-label="Decrease turns">−</button>
+                                        <input type="number" id="activeFileTurns" min="0" max="20" step="1" value="1" inputmode="numeric">
+                                        <button type="button" class="stepper-btn" id="activeFileTurnsInc" aria-label="Increase turns">+</button>
+                                    </div>
+                                    <span class="stepper-unit" id="activeFileTurnsUnit">1 turn</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- The old "Active Model" section (provider/model selects,
@@ -352,56 +437,77 @@
                 </div>
 
                 <!-- Avatar display prefs (user-level settings; stays in Settings) -->
-                <div class="settings-section" data-settings-tab="appearance">
-                    <h3>Avatar display</h3>
-
-                    <label>Avatar size</label>
-                    <div class="size-preset-buttons">
-                        <button type="button" class="size-preset-btn" data-size="small">S</button>
-                        <button type="button" class="size-preset-btn active" data-size="medium">M</button>
-                        <button type="button" class="size-preset-btn" data-size="large">L</button>
-                        <button type="button" class="size-preset-btn" data-size="xlarge">XL</button>
-                    </div>
-                    <div class="param-group avatar-size-control">
-                        <label for="avatarSizeSlider">
-                            Custom size <span class="param-value" id="avatarSizeValue">120px</span>
-                        </label>
-                        <input type="range" id="avatarSizeSlider" min="32" max="480" step="4" value="120">
+                <div class="settings-section setting-group" data-settings-tab="appearance">
+                    <div class="setting-group-head">
+                        <h3>Avatar display</h3>
+                        <span class="scope-pill">Synced</span>
                     </div>
 
-                    <label>Avatar position</label>
-                    <div class="position-preset-buttons">
-                        <button type="button" class="position-preset-btn" data-position="top-left" aria-label="Position top left">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="17" y1="17" x2="7" y2="7"></line>
-                                <polyline points="7 17 7 7 17 7"></polyline>
-                            </svg>
-                        </button>
-                        <button type="button" class="position-preset-btn active" data-position="top-right" aria-label="Position top right">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="7" y1="17" x2="17" y2="7"></line>
-                                <polyline points="7 7 17 7 17 17"></polyline>
-                            </svg>
-                        </button>
-                        <button type="button" class="position-preset-btn" data-position="bottom-left" aria-label="Position bottom left">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="17" y1="7" x2="7" y2="17"></line>
-                                <polyline points="17 17 7 17 7 7"></polyline>
-                            </svg>
-                        </button>
-                        <button type="button" class="position-preset-btn" data-position="bottom-right" aria-label="Position bottom right">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="7" y1="7" x2="17" y2="17"></line>
-                                <polyline points="17 7 17 17 7 17"></polyline>
-                            </svg>
-                        </button>
-                    </div>
+                    <div class="setting-card">
+                        <div class="setting-row row-inline-mobile">
+                            <div class="setting-copy">
+                                <label class="setting-label" for="showAvatar">Show floating avatar</label>
+                                <span class="setting-desc">Display the persona's portrait floating in the chat area.</span>
+                            </div>
+                            <div class="setting-control">
+                                <input type="checkbox" role="switch" id="showAvatar" class="setting-switch" checked>
+                            </div>
+                        </div>
 
-                    <p class="help-text">Tip: drag the avatar in the chat to place it anywhere. A preset above snaps it back to a corner.</p>
+                        <div class="setting-row stacked">
+                            <div class="setting-subhead">
+                                <div class="setting-copy">
+                                    <span class="setting-label">Avatar size</span>
+                                </div>
+                                <div class="setting-control">
+                                    <div class="segmented size-seg size-preset-buttons">
+                                        <button type="button" class="size-preset-btn" data-size="small"><span class="ui-btn-label">S</span></button>
+                                        <button type="button" class="size-preset-btn active" data-size="medium"><span class="ui-btn-label">M</span></button>
+                                        <button type="button" class="size-preset-btn" data-size="large"><span class="ui-btn-label">L</span></button>
+                                        <button type="button" class="size-preset-btn" data-size="xlarge"><span class="ui-btn-label">XL</span></button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="slider-inline avatar-size-control">
+                                <input type="range" id="avatarSizeSlider" min="32" max="480" step="4" value="120" aria-label="Custom avatar size">
+                                <span class="value-pill" id="avatarSizeValue">120px</span>
+                            </div>
+                        </div>
 
-                    <div class="checkbox-wrapper">
-                        <input type="checkbox" id="showAvatar" checked>
-                        <label for="showAvatar">Show floating avatar</label>
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <span class="setting-label">Avatar position</span>
+                                <span class="setting-desc">Drag the avatar in chat to place it anywhere. A corner preset snaps it back.</span>
+                            </div>
+                            <div class="setting-control">
+                                <div class="segmented icon-seg position-preset-buttons">
+                                    <button type="button" class="position-preset-btn" data-position="top-left" aria-label="Position top left">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <line x1="17" y1="17" x2="7" y2="7"></line>
+                                            <polyline points="7 17 7 7 17 7"></polyline>
+                                        </svg>
+                                    </button>
+                                    <button type="button" class="position-preset-btn active" data-position="top-right" aria-label="Position top right">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <line x1="7" y1="17" x2="17" y2="7"></line>
+                                            <polyline points="7 7 17 7 17 17"></polyline>
+                                        </svg>
+                                    </button>
+                                    <button type="button" class="position-preset-btn" data-position="bottom-left" aria-label="Position bottom left">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <line x1="17" y1="7" x2="7" y2="17"></line>
+                                            <polyline points="17 17 7 17 7 7"></polyline>
+                                        </svg>
+                                    </button>
+                                    <button type="button" class="position-preset-btn" data-position="bottom-right" aria-label="Position bottom right">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <line x1="7" y1="7" x2="17" y2="17"></line>
+                                            <polyline points="17 7 17 17 7 17"></polyline>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -417,46 +523,64 @@
                     <button class="add-expression-btn" id="addExpressionBtn">+ Add expression</button>
                 </div>
 
+                <!-- Advanced: Automation (chat naming & aux expression picking) -->
+                <div class="settings-section setting-group" data-settings-tab="advanced">
+                    <div class="setting-group-head">
+                        <h3>Automation</h3>
+                        <span class="scope-pill">Synced</span>
+                    </div>
+
+                    <div class="setting-card">
+                        <div class="setting-row row-inline-mobile">
+                            <div class="setting-copy">
+                                <label class="setting-label" for="autoTitleToggle">Name new chats automatically</label>
+                                <span class="setting-desc">Generates a title after the first reply. Manual renames always win.</span>
+                                <span class="setting-status-note" id="autoTitleSource"></span>
+                            </div>
+                            <div class="setting-control">
+                                <input type="checkbox" role="switch" id="autoTitleToggle" class="setting-switch" checked>
+                            </div>
+                        </div>
+
+                        <div class="setting-row row-inline-mobile">
+                            <div class="setting-copy">
+                                <label class="setting-label" for="auxExpressionsToggle">Pick expressions with the aux model</label>
+                                <span class="setting-desc">Lets your aux model choose the avatar pose after each reply instead of adding expression rules to the chat prompt.</span>
+                                <span class="setting-status-note" id="auxExpressionsSource"></span>
+                            </div>
+                            <div class="setting-control">
+                                <input type="checkbox" role="switch" id="auxExpressionsToggle" class="setting-switch">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Advanced: the platform prompt layer (AP-02, docs/design/ADVANCED_PROMPTS_PLAN.md).
                      A preset overrides Tessera's built-in prompt blocks; "Built-in
                      prompt" is a real choice in the list, not the absence of one. -->
-                <div class="settings-section" data-settings-tab="advanced">
-                    <h3>Chat names</h3>
-                    <p class="section-note">Synced to your account.</p>
-                    <label class="checkbox-row" for="autoTitleToggle">
-                        <input type="checkbox" id="autoTitleToggle" checked>
-                        <span>Name new chats automatically</span>
-                    </label>
-                    <p class="section-note" id="autoTitleSource"></p>
-                    <p class="section-note">Renaming a chat yourself always wins — nothing here overwrites a name you chose. Naming is retried after each reply while a chat is still called "New Chat", so a failed first turn is named on the next one.</p>
-                </div>
-
-                <div class="settings-section" data-settings-tab="advanced">
-                    <h3>Avatar expressions</h3>
-                    <p class="section-note">Synced to your account.</p>
-                    <label class="checkbox-row" for="auxExpressionsToggle">
-                        <input type="checkbox" id="auxExpressionsToggle">
-                        <span>Pick expressions with the aux model</span>
-                    </label>
-                    <p class="section-note" id="auxExpressionsSource"></p>
-                    <p class="section-note">When on, expression instructions are removed from your chat model's system prompt and your aux model chooses the avatar pose after each reply.</p>
-                </div>
-
-                <div class="settings-section" data-settings-tab="advanced">
-                    <h3>Prompt presets</h3>
-                    <p class="section-note">Synced to your account.</p>
-                    <p class="section-note">A preset overrides the platform prompt wrapped around your persona — the orientation preamble, the expression protocol, the scratchpad instructions — and the order they appear in. Blocks you don't edit keep following the built-in, so improvements to it still reach you.</p>
+                <div class="settings-section setting-group" data-settings-tab="advanced">
+                    <div class="setting-group-head">
+                        <h3>Prompt presets</h3>
+                        <span class="scope-pill">Synced</span>
+                    </div>
 
                     <!-- Two panels, list ⇄ editor (AP-03), mirroring the Models
                          catalog/detail split rather than nesting an editor in a
                          row: the block textareas need the full column width. -->
-                    <div id="presetListPanel">
-                        <div class="preset-list" id="presetList"></div>
-                        <div class="preset-list-actions">
-                            <button type="button" class="add-expression-btn" id="createPresetBtn">+ New preset</button>
-                            <button type="button" class="preset-action" id="importPresetBtn">Import…</button>
+                    <div class="setting-card" id="presetListPanel">
+                        <div class="setting-row preset-card-intro">
+                            <div class="setting-copy">
+                                <span class="setting-desc">Customize or reorder Solier's platform prompt blocks (orientation, expressions, scratchpad). Unedited blocks stay in sync with built-in updates.</span>
+                            </div>
                         </div>
-                        <p class="section-note">The default applies to every chat unless a persona or an individual chat overrides it.</p>
+                        <div class="preset-list" id="presetList"></div>
+                        <div class="preset-footer-bar">
+                            <span class="setting-desc">The default applies unless a persona or chat overrides it.</span>
+                            <div class="preset-list-actions">
+                                <button type="button" class="btn btn-secondary btn-pill btn-sm" id="importPresetBtn"><span class="ui-btn-label">Import…</span></button>
+                                <button type="button" class="btn btn-soft-accent btn-pill btn-sm" id="createPresetBtn"><span class="ui-btn-label">+ New preset</span></button>
+                            </div>
+                        </div>
                     </div>
                     <div class="preset-editor" id="presetEditor" hidden></div>
                 </div>
@@ -464,18 +588,45 @@
                 <!-- Prompt inspector (AP-05): the assembled prompt for the open
                      chat, block by block, with provenance. Runs the real
                      /api/chat/preview assembly rather than re-deriving it. -->
-                <div class="settings-section" data-settings-tab="advanced">
-                    <h3>Prompt preview</h3>
-                    <p class="section-note">Exactly what the platform prompt assembles to right now, and why each block is or isn't in it.</p>
-                    <button type="button" class="preset-action" id="refreshInspectorBtn">Assemble now</button>
-                    <div class="prompt-inspector" id="promptInspector"></div>
+                <div class="settings-section setting-group" data-settings-tab="advanced">
+                    <div class="setting-group-head">
+                        <h3>Prompt preview</h3>
+                    </div>
+
+                    <div class="setting-card">
+                        <div class="setting-row">
+                            <div class="setting-copy">
+                                <span class="setting-label">Inspect assembled prompt</span>
+                                <span class="setting-desc">See exactly what the platform prompt assembles to right now, and why each block is included or omitted.</span>
+                            </div>
+                            <div class="setting-control">
+                                <button type="button" class="btn btn-secondary btn-pill btn-sm" id="refreshInspectorBtn"><span class="ui-btn-label">Assemble now</span></button>
+                            </div>
+                        </div>
+                        <div class="prompt-inspector" id="promptInspector"></div>
+                    </div>
                 </div>
 
                 <!-- Account Section -->
-                <div class="settings-section account-section" data-settings-tab="account">
-                    <h3>Account</h3>
-                    <p class="account-info" id="accountInfo">Signed in</p>
-                    <button type="button" class="logout-btn" id="logoutBtn">Sign out</button>
+                <div class="settings-section setting-group account-section" data-settings-tab="account">
+                    <div class="setting-group-head">
+                        <h3>Account</h3>
+                    </div>
+
+                    <div class="setting-card">
+                        <div class="setting-row row-inline-mobile">
+                            <div class="account-identity">
+                                <div class="account-avatar" id="accountAvatar" aria-hidden="true">S</div>
+                                <div class="setting-copy">
+                                    <span class="setting-label" id="accountName">Account</span>
+                                    <span class="setting-desc account-info" id="accountInfo">Signed in</span>
+                                </div>
+                            </div>
+                            <div class="setting-control">
+                                <button type="button" class="btn btn-danger-outline btn-pill btn-sm logout-btn" id="logoutBtn"><span class="ui-btn-label">Sign out</span></button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 </div><!-- /.settings-modal-body -->

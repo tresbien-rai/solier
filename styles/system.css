@@ -114,32 +114,9 @@
     text-align: left;
 }
 
-/* ===== Account Section (sidebar) ===== */
-.account-section {
-    margin-top: 8px;
-}
-
+/* ===== Account Section (Settings → Account, UIP-09) ===== */
 .account-info {
-    color: var(--text-secondary);
-    font-size: 13px;
-    margin-bottom: 12px;
-    word-break: break-all;
-}
-
-.logout-btn {
-    width: 100%;
-    padding: 10px;
-    background-color: transparent;
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    font-size: 14px;
-    transition: background-color 0.2s;
-}
-
-.logout-btn:hover {
-    background-color: color-mix(in srgb, var(--error) 10%, transparent);
+    word-break: break-word;
 }
 
 @media (max-width: 480px) {
