@@ -594,16 +594,12 @@ function syncAutoTitleSource() {
     if (!el) return;
     const aux = state.settings.auxModel;
     if (!aux) {
-        el.innerHTML = 'Right now names come from the <strong>opening words of your first message</strong>, '
-            + 'which costs nothing. To get names that describe the topic instead, pick an aux model in '
-            + '<strong>Models</strong> — a model\'s ⋯ menu → "Use as aux model". A cheap one is plenty.';
+        el.innerHTML = 'Using <strong>first-message preview</strong> · pick an aux model in <strong>Models</strong> for topic titles.';
         return;
     }
     const known = (state.settings.customModels[aux.provider] || []).find(m => m.id === aux.model);
     const label = known ? known.name : aux.model;
-    el.innerHTML = `Names are written by your aux model, <strong>${escapeHtml(label)}</strong>, `
-        + 'and what it costs appears in that chat\'s token breakdown. '
-        + 'If the call fails, the opening words of your first message are used instead.';
+    el.innerHTML = `Using aux model <strong>${escapeHtml(label)}</strong> · falls back to first-message preview on error.`;
 }
 
 /**
@@ -615,24 +611,37 @@ function syncAuxExpressionsSource() {
     const el = elements.auxExpressionsSource;
     if (!el) return;
     if (!state.settings.auxExpressions) {
-        el.innerHTML = 'Right now your chat model declares its own mood with an <code>[expression: name]</code> tag.';
+        el.innerHTML = 'Currently using inline <code>[expression: name]</code> tags.';
         return;
     }
     const aux = state.settings.auxModel;
     if (!aux) {
-        el.innerHTML = 'No aux model is set yet, so your chat model will keep declaring tags for now. '
-            + 'Pick an aux model in <strong>Models</strong> — a model\'s ⋯ menu → "Use as aux model".';
+        el.innerHTML = 'No aux model set yet — still using inline tags. Pick one in <strong>Models</strong> (⋯ → "Use as aux model").';
         return;
     }
     const known = (state.settings.customModels[aux.provider] || []).find(m => m.id === aux.model);
     const label = known ? known.name : aux.model;
     if (!state.apiKeyStatus[aux.provider]?.hasKey) {
-        el.innerHTML = `Your aux model (<strong>${escapeHtml(label)}</strong>) has no API key configured yet, `
-            + 'so your chat model will keep declaring tags for now.';
+        el.innerHTML = `Aux model <strong>${escapeHtml(label)}</strong> has no API key yet — still using inline tags.`;
         return;
     }
-    el.innerHTML = `Expressions are picked by your aux model, <strong>${escapeHtml(label)}</strong>, `
-        + 'after each reply. Its token cost appears in that chat\'s token breakdown.';
+    el.innerHTML = `Picked by aux model <strong>${escapeHtml(label)}</strong> after each reply.`;
+}
+
+function syncActiveFileTurnsStepper(raw) {
+    const input = elements.activeFileTurns;
+    if (!input) return 1;
+    let v = parseInt(raw, 10);
+    if (!Number.isFinite(v)) v = CONFIG.defaults.activeFileTurns;
+    v = Math.max(0, Math.min(20, v));
+    input.value = v;
+    const dec = document.getElementById('activeFileTurnsDec');
+    const inc = document.getElementById('activeFileTurnsInc');
+    const unit = document.getElementById('activeFileTurnsUnit');
+    if (dec) dec.disabled = v <= 0;
+    if (inc) inc.disabled = v >= 20;
+    if (unit) unit.textContent = v === 0 ? 'Off' : (v === 1 ? '1 turn' : `${v} turns`);
+    return v;
 }
 
 function updateSettingsUI() {
@@ -683,7 +692,7 @@ async function updateUI() {
     // The five named sections (PS-02). `systemPrompt` above is the sixth.
     syncPersonaSectionFields(persona);
     elements.showAvatar.checked = state.settings.showAvatar;
-    if (elements.activeFileTurns) elements.activeFileTurns.value = state.settings.activeFileTurns;
+    if (elements.activeFileTurns) syncActiveFileTurnsStepper(state.settings.activeFileTurns);
     if (elements.autoTitleToggle) elements.autoTitleToggle.checked = state.settings.autoTitle !== false;
     syncAutoTitleSource();
     if (elements.auxExpressionsToggle) elements.auxExpressionsToggle.checked = Boolean(state.settings.auxExpressions);
@@ -1423,14 +1432,17 @@ function setupEventListeners() {
     // Server-backed, so it rides the settings auto-save. Clamp to the same
     // 0–20 the API enforces and reflect the clamped value back in the field.
     if (elements.activeFileTurns) {
-        elements.activeFileTurns.addEventListener('change', () => {
-            let v = parseInt(elements.activeFileTurns.value, 10);
-            if (!Number.isFinite(v)) v = CONFIG.defaults.activeFileTurns;
-            v = Math.max(0, Math.min(20, v));
-            elements.activeFileTurns.value = v;
+        const applyTurns = (next) => {
+            const v = syncActiveFileTurnsStepper(next);
             state.settings.activeFileTurns = v;
             autoSaveSettings();
-        });
+        };
+        elements.activeFileTurns.addEventListener('change', () => applyTurns(elements.activeFileTurns.value));
+        const dec = document.getElementById('activeFileTurnsDec');
+        const inc = document.getElementById('activeFileTurnsInc');
+        if (dec) dec.addEventListener('click', () => applyTurns(parseInt(elements.activeFileTurns.value, 10) - 1));
+        if (inc) inc.addEventListener('click', () => applyTurns(parseInt(elements.activeFileTurns.value, 10) + 1));
+        syncActiveFileTurnsStepper(elements.activeFileTurns.value);
     }
 
     // AX-02: server-backed, so it rides the settings auto-save like the field
@@ -1903,15 +1915,33 @@ function showApp() {
 }
 
 function updateAccountInfo() {
-    const el = document.getElementById('accountInfo');
-    if (!el) return;
+    const infoEl = document.getElementById('accountInfo');
+    const nameEl = document.getElementById('accountName');
+    const avatarEl = document.getElementById('accountAvatar');
+    if (!infoEl) return;
     if (state.user) {
-        const label = state.user.displayName || state.user.email || 'Signed in';
-        el.textContent = state.user.email
-            ? `${label} (${state.user.email})`
-            : label;
+        const rawName = (state.user.displayName || '').trim();
+        const email = (state.user.email || '').trim();
+        const displayName = rawName || email || 'Account';
+        if (nameEl) nameEl.textContent = displayName;
+        if (rawName && email) {
+            infoEl.textContent = `${email} · Signed in with Google`;
+        } else if (email) {
+            infoEl.textContent = 'Signed in with Google';
+        } else {
+            infoEl.textContent = 'Signed in';
+        }
+        if (avatarEl) {
+            const parts = displayName.split(/\s+/).filter(Boolean);
+            const initials = parts.length >= 2
+                ? `${parts[0][0]}${parts[parts.length - 1][0]}`
+                : displayName.slice(0, 2);
+            avatarEl.textContent = (initials || 'S').toUpperCase();
+        }
     } else {
-        el.textContent = 'Signed in';
+        if (nameEl) nameEl.textContent = 'Account';
+        infoEl.textContent = 'Signed in';
+        if (avatarEl) avatarEl.textContent = 'S';
     }
 }
 

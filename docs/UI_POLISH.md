@@ -319,3 +319,15 @@ Locked decisions & implementation (`feat/uip-08-all-chats`, `js/state.js`, `js/v
   where the top-right `New chat` button lands, while each Workspace/`Unfiled`
   header (`+ New chat`) and `› Project` header (`+ New`) can start a chat
   directly in that home. The rail `New chat` button stays unfiled.
+
+---
+
+## UIP-09 — Settings redesign & app-wide font-switching stability
+
+**Status:** shipped (2026-11-24; Option A + self-themed swatches locked from interactive prototype).
+
+Redesigned `#settingsView` across all four tabs (`Appearance`, `Files`, `Advanced`, `Account`) and eliminated layout jitter when switching fonts across the app (`feat/uip-09-settings-polish`, `index.html`, `js/main.js`, `js/ui-prefs.js`, `styles/tokens.css`, `styles/base.css`, `styles/forms.css`, `styles/system.css`, `styles/buttons.css`):
+- **Structured Setting Cards & Rows (Option A):** Replaced stretched full-width flex buttons and italic-accent `.section-note` paragraphs with grouped `.setting-card` surfaces, calm `--text-muted` descriptions, subtle inline `This device` / `Synced` pills, compact right-aligned segmented controls (stacking cleanly on phone), and accessible `role="switch"` toggle switches.
+- **Self-themed 4×2 Theme Grid & 4-col Font Grid:** Replaced flex-wrapped theme/font rows (which stretched orphan items on row 2/3) with explicit CSS Grids (`4×2` Light/Dark desktop, `2×4` phone for Themes; `4-col` desktop, `2-col` phone for Fonts). Each theme tile wears its own palette background, border, text ink, and solid accent dot.
+- **Tactile Files Stepper, Unified Advanced & Compact Account:** Replaced the native `<input type="number">` spinner on Files with a `− / N / +` stepper (`Off` at `0`, `1 turn` / `N turns`), tightened Advanced Automation/Presets copy, unified `Import…` / `+ New preset` / `Assemble now` / `.preset-action` onto `32px` `.btn-sm` pills, and replaced the `720px` `Sign out` bar with a compact Account identity card.
+- **App-wide Font-Switching Stability & Alignment:** Added `--font-adjust: 0.54` (`font-size-adjust` with `@supports` fallback), explicit `line-height` on base controls and fixed `40px` height on `.settings-tabs`, `text-box: trim-both cap alphabetic` (`.ui-btn-label`) for optical vertical centering across fonts, `scrollbar-gutter: stable` on `.main-view-panel` (eliminating the `7px` horizontal tab jump), mobile tab fit on `390px`, fixed `.settings-section .checkbox-row` specificity, and removed dead `#settingsModal` CSS.

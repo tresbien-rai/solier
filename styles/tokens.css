@@ -38,6 +38,8 @@
     --font-chat: var(--font-main);
     --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     --font-brand: 'Newsreader', Georgia, serif;
+    /* Normalized x-height aspect ratio (Inter ~0.545) so switching fonts keeps optical size steady (UIP-09). */
+    --font-adjust: 0.54;
 
     /* Type scale (modular ~1.25; rem-based) */
     --text-xs: 0.75rem;    /* 12px — timestamps, badges, help text */

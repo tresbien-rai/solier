@@ -163,15 +163,20 @@ export function applyRecentStyle(style) {
 }
 
 export function applyFont(name = UiPrefs.get('fontFamily'), scope = UiPrefs.get('fontScope')) {
-    const stack = FONTS[name] || FONTS.inter;
+    const resolvedName = FONTS[name] ? name : 'inter';
+    const stack = FONTS[resolvedName];
     const resolvedScope = FONT_SCOPES.has(scope) ? scope : 'all';
     const root = document.documentElement;
     if (resolvedScope === 'chat') {
         root.style.removeProperty('--font-main');
         root.style.setProperty('--font-chat', stack);
+        root.removeAttribute('data-font');
+        root.setAttribute('data-chat-font', resolvedName);
     } else {
         root.style.setProperty('--font-main', stack);
         root.style.removeProperty('--font-chat');
+        root.setAttribute('data-font', resolvedName);
+        root.removeAttribute('data-chat-font');
     }
 }
 
