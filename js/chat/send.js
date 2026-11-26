@@ -502,6 +502,7 @@ export function buildChatRequest() {
         model: modelConfig.model,
         messages,
         systemPrompt,
+        personaName: persona?.name || '',
         // The server's Tessera base layer names these in the expression
         // protocol, so the model is told the persona's REAL expression set
         // rather than a list frozen into the prompt text at creation.

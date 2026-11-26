@@ -138,13 +138,35 @@ function renderMessages(messages) {
       assert.ok(content.includes('<session_state>'));
     });
 
-    check('`<session_state>` precedes `<scratchpad>` in the last user message', () => {
+    check('`<current_context>` wraps `<session_state>` before `<scratchpad>` AND precedes the user text', () => {
       const last = full.messages[full.messages.length - 1];
       const content = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
+      const openIdx = content.indexOf('<current_context>');
       const stateIdx = content.indexOf('<session_state>');
       const padIdx = content.indexOf('<scratchpad>');
-      assert.ok(stateIdx !== -1 && padIdx !== -1, 'both blocks present');
-      assert.ok(stateIdx < padIdx, `<session_state> (${stateIdx}) must appear before <scratchpad> (${padIdx})`);
+      const closeIdx = content.indexOf('</current_context>');
+      const msgIdx = content.indexOf('Plot a course.');
+      assert.ok(openIdx !== -1 && closeIdx !== -1, '<current_context> wrapper present');
+      assert.ok(stateIdx !== -1 && padIdx !== -1, 'both inner blocks present');
+      assert.ok(openIdx < stateIdx && stateIdx < padIdx && padIdx < closeIdx && closeIdx < msgIdx,
+        `expected <current_context> < <session_state> < <scratchpad> < </current_context> < user message`);
+    });
+
+    const mmTurn = [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', data: 'abc' } },
+        { type: 'text', text: 'What is in this chart?' },
+      ],
+    }];
+    const mm = await assemble(mmTurn);
+    check('`<current_context>` prepends cleanly ahead of multimodal array content', () => {
+      const last = mm.messages[mm.messages.length - 1];
+      assert.ok(Array.isArray(last.content), 'array shape preserved');
+      assert.strictEqual(last.content[0].type, 'text');
+      assert.ok(last.content[0].text.startsWith('<current_context>'), 'prepended as first block');
+      assert.strictEqual(last.content[1].type, 'image', 'image preserved after context');
+      assert.strictEqual(last.content[2].text, 'What is in this chart?', 'user caption preserved last');
     });
 
     // --- Guarantee 2: the history ahead of the newest turn is reproduced ----
@@ -200,9 +222,91 @@ function renderMessages(messages) {
     const auxTurn1 = await assemble(turn1);
     const auxTurn2 = await assemble(turn2);
 
-    check('auxExpressions omits ## Expression from `system` and stays byte-identical across turns', () => {
-      assert.ok(!String(auxTurn1.system).includes('## Expression'), 'expression instructions removed');
+    check('auxExpressions omits ## Avatar Expressions from `system` and stays byte-identical across turns', () => {
+      assert.ok(!String(auxTurn1.system).includes('## Avatar Expressions'), 'expression instructions removed');
       assert.strictEqual(auxTurn1.system, auxTurn2.system, 'system unchanged across turns');
+    });
+
+    // --- Guarantee 4: User profile in Message layer stays cached across turns -
+    console.log('\nMessage-layer profile + bare-chat omission (DF-02)...');
+    dal.upsertUserProfile(userId, {
+      preferredName: 'Rai',
+      sections: [{ id: 's1', title: 'Role', body: 'Navigator.', enabled: true }],
+    });
+    const profTurn1 = await assemble(turn1);
+    const profTurn2 = await assemble(turn2);
+
+    check('Message-layer `<user_profile>` + `Reference context noted.` sits in cached prefix and is byte-identical across turns', () => {
+      assert.ok(!String(profTurn1.system).includes('<user_profile>'), 'profile is not in system by default');
+      assert.strictEqual(profTurn1.messages[0].role, 'user');
+      assert.ok(profTurn1.messages[0].content.includes('<user_profile>'), 'profile leads message layer');
+      assert.ok(profTurn1.messages[0].content.includes('# User: Rai'), 'user name in header');
+      assert.strictEqual(profTurn1.messages[1].role, 'assistant');
+      assert.strictEqual(profTurn1.messages[1].content, 'Reference context noted.');
+      assert.deepStrictEqual(
+        renderMessages(profTurn1.messages).slice(0, 2),
+        renderMessages(profTurn2.messages).slice(0, 2),
+        'leading profile + ack pair is byte-identical across turns'
+      );
+    });
+
+    // Bare chat (unfiled, tools off, scratchpad off, 0 chat files): no <current_context>
+    const bareConvo = dal.createConversation(userId, { personaId: persona.id, title: 'bare' });
+    dal.updateConversation(bareConvo.id, userId, { scratchpadEnabled: false, toolsEnabled: false });
+    const bareReq = reqFor(userId, { conversationId: bareConvo.id, messages: turn1 });
+    const bareRes = await assembleChatRequest(bareReq, resolveRequestContainers(bareReq), {
+      systemPrompt: 'You are Vela, a terse navigator.',
+      messages: turn1,
+      expressionNames: [],
+      model: 'claude-opus-5',
+    });
+
+    check('bare chat omits `<current_context>` and `<session_state>` completely', () => {
+      const last = bareRes.messages[bareRes.messages.length - 1];
+      assert.strictEqual(last.content, 'Plot a course.', 'user message left completely bare');
+      assert.ok(!renderMessages(bareRes.messages).join('\n').includes('<current_context>'));
+      assert.ok(!renderMessages(bareRes.messages).join('\n').includes('<session_state>'));
+      assert.strictEqual(bareRes.promptOptions.bareChat, true);
+    });
+
+    // Unfiled + tools off + scratchpad off + >=1 chat file => <current_context> emitted, zero file tools in system
+    dal.addConversationFile(bareConvo.id, { filename: 'notes.txt', driveFileId: 'mock-drive-id', sizeBytes: 42 });
+    const withFileReq = reqFor(userId, { conversationId: bareConvo.id, messages: turn1 });
+    const withFileRes = await assembleChatRequest(withFileReq, resolveRequestContainers(withFileReq), {
+      systemPrompt: 'You are Vela, a terse navigator.',
+      messages: turn1,
+      expressionNames: [],
+      model: 'claude-opus-5',
+    });
+    check('chat with uploaded file (tools off, scratchpad off, unfiled) emits `<current_context>` without advertising file tools', () => {
+      const last = withFileRes.messages[withFileRes.messages.length - 1];
+      assert.ok(String(last.content).includes('<current_context>'), 'context emitted because conversation has files');
+      assert.ok(String(last.content).includes('<session_state>'));
+      assert.ok(!String(withFileRes.system).includes('## File Tools'), 'no File Tools section when tools off');
+      assert.ok(!String(withFileRes.system).includes('read_file'), 'no file tool names advertised');
+    });
+
+    // Preset moving `profile` into System layer: appears in `system`, not duplicated in messages[0], no stray ack
+    const sysProfPreset = dal.createPromptPreset(userId, {
+      name: 'profile-in-system',
+      blocks: {
+        order: ['orientation', 'profile', 'persona', 'capabilities'],
+        blocks: { profile: { enabled: true, text: null, layer: 'system' } },
+      },
+    });
+    dal.updateConversation(bareConvo.id, userId, { presetId: sysProfPreset.id });
+    const sysProfReq = reqFor(userId, { conversationId: bareConvo.id, messages: turn1 });
+    const sysProfRes = await assembleChatRequest(sysProfReq, resolveRequestContainers(sysProfReq), {
+      systemPrompt: 'You are Vela, a terse navigator.',
+      messages: turn1,
+      expressionNames: [],
+      model: 'claude-opus-5',
+    });
+    check('preset moving `profile` to System emits it in `system`, avoids duplicating in messages, and omits stray ack', () => {
+      assert.ok(String(sysProfRes.system).includes('<user_profile>'), 'profile present in system');
+      assert.ok(String(sysProfRes.system).includes('# User: Rai'));
+      assert.strictEqual(sysProfRes.messages.length, 1, 'no synthetic leading context turn or stray ack');
+      assert.ok(!String(sysProfRes.messages[0].content).includes('<user_profile>'), 'not duplicated in messages');
     });
 
   } catch (err) {

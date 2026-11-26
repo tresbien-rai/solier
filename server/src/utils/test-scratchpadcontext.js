@@ -159,9 +159,9 @@ function row(conversationId, userId) {
       const on = buildSystemPrompt('You are a test persona.', ['neutral'], { scratchpad: true });
       assert.ok(!/## Scratchpad/.test(off), 'absent when not active');
       assert.ok(/## Scratchpad/.test(on), 'present when active');
-      assert.ok(/replace/i.test(on), 'carries the churn nudge');
+      assert.ok(/updating it in place|appending a log/i.test(on), 'carries the live-state nudge');
       assert.ok(on.includes('write_scratchpad') && on.includes('edit_scratchpad'), 'carries the tool-first rule');
-      assert.ok(on.includes('You are a test persona.'), 'persona still appended after the base layer');
+      assert.ok(on.includes('You are a test persona.'), 'persona included in system prompt');
     });
 
   } catch (err) {

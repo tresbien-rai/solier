@@ -16,16 +16,17 @@ const { asyncHandler } = require('../middleware/errorHandler');
 const { getDecryptedApiKey } = require('./apiKeys');
 const dal = require('../db/dal');
 const { assembleProjectContext, assembleWorkspaceContext } = require('../utils/projectContext');
-const { resolveActiveFileBlock, appendToLastUserMessage } = require('../utils/activeFiles');
+const { resolveActiveFileBlock, prependToLastUserMessage } = require('../utils/activeFiles');
 const { resolveScratchpadBlock } = require('../utils/scratchpadContext');
 const { TOOL_DEFINITIONS, SCRATCHPAD_TOOL_DEFINITIONS } = require('../tools/definitions');
 const config = require('../config');
 const {
   buildSystemPrompt, buildContextAck, composeSystemPrompt, describeContextAck,
   sessionStateBlock, describeSessionState,
+  buildProfileMessageBlock, describeProfileMessageBlock,
 } = require('../prompts/tessera');
-const { buildSessionState } = require('../prompts/sessionState');
-const { renderProfile, resolveUserName } = require('../prompts/profile');
+const { buildSessionState, hasSessionContext } = require('../prompts/sessionState');
+const { renderProfile, resolveUserName, hasProfileData } = require('../prompts/profile');
 const { PRESET_NONE } = require('../prompts/presets');
 const { executeToolCall } = require('../tools');
 const AppError = require('../utils/AppError');
@@ -231,11 +232,16 @@ async function resolveRequestContext(req, containers = null, toolsEnabled = fals
  * @returns {{ system: string|undefined, messages: Array }}
  */
 function assembleProviderInput(requestContext, systemPrompt, messages = [], expressionNames = [], scratchpadEnabled = false, promptOptions = {}) {
+  const profileBlock = buildProfileMessageBlock(promptOptions);
+  const leadingParts = [];
+  if (profileBlock) leadingParts.push(profileBlock);
+  if (requestContext?.text) leadingParts.push(requestContext.text);
+
   const ack = buildContextAck(promptOptions);
-  const contextMessages = requestContext?.text
+  const contextMessages = leadingParts.length > 0
     ? [
-        { role: 'user', content: requestContext.text },
-        // A preset can disable the ack block; then the KB turn stands alone.
+        { role: 'user', content: leadingParts.join('\n\n') },
+        // A preset can disable the ack block; then the leading context turn stands alone.
         ...(ack ? [{ role: 'assistant', content: ack }] : []),
       ]
     : [];
@@ -284,36 +290,55 @@ async function assembleChatRequest(req, containers, { systemPrompt, messages, ex
   }
 
   const scratchpadEnabled = resolveScratchpadEnabled(userId, containers.conversation);
+  const hasContainer = Boolean(containers.workspace || containers.project);
+  const includeCurrentContext = hasSessionContext({
+    workspace: containers.workspace || null,
+    project: containers.project || null,
+    conversationId,
+    toolsEnabled,
+    scratchpadEnabled,
+  });
 
-  // SS-02: what exists right now — including what does NOT. Resolved before the
-  // volatile context blocks so `<session_state>` sits FIRST in the appended tail,
-  // directly above `<active_files>` and `<scratchpad>` ("current content below").
+  // DF-02: assemble volatile per-turn data (`<session_state>`, `<active_files>`,
+  // `<scratchpad>`) inside a single `<current_context>` XML envelope prepended
+  // ahead of the latest user message so the user's words land last with peak
+  // recency while keeping the entire history prefix 100% cache-identical.
+  // Omitted completely on bare chats (no container, no tools, no pad, 0 chat files).
+  const stateText = includeCurrentContext
+    ? buildSessionState({
+        workspace: containers.workspace || null,
+        project: containers.project || null,
+        conversationId,
+        scratchpadEnabled,
+      })
+    : '';
+
   const withState = {
     ...promptOptions,
-    sessionState: buildSessionState({
-      workspace: containers.workspace || null,
-      project: containers.project || null,
-      conversationId,
-      scratchpadEnabled,
-    }),
+    toolsEnabled,
+    hasContainer,
+    bareChat: !includeCurrentContext,
+    sessionState: stateText,
   };
 
-  // PC-01: `<session_state>` goes in the MESSAGE layer, appended ahead of
-  // `<active_files>` and `<scratchpad>` in the volatile tail — after the part
-  // of the request both this turn and the next reproduce byte-for-byte
-  // (docs/design/PROMPT_CACHING_DESIGN.md, §2.1).
-  let trailingMessages = appendToLastUserMessage(messages, sessionStateBlock(withState));
+  let trailingMessages = messages;
+  if (includeCurrentContext) {
+    const contextParts = [];
+    const sBlock = sessionStateBlock(withState);
+    if (sBlock) contextParts.push(sBlock);
 
-  const activeBlock = await resolveActiveFileBlock(userId, conversationId, currentTurn, activeFileTurns);
-  if (activeBlock) trailingMessages = appendToLastUserMessage(trailingMessages, activeBlock);
+    const activeBlock = await resolveActiveFileBlock(userId, conversationId, currentTurn, activeFileTurns);
+    if (activeBlock) contextParts.push(activeBlock);
 
-  // Scratchpad (SP-02): injected in full every turn it is active + non-empty
-  // (NOT recency-windowed like active files). Gated on the same enabled flag the
-  // endpoints use to advertise the scratchpad tools, so a disabled pad neither
-  // injects nor tempts the model.
-  if (scratchpadEnabled) {
-    const scratchpadBlock = resolveScratchpadBlock(conversationId, currentTurn, config.scratchpad.injectDiffCount);
-    if (scratchpadBlock) trailingMessages = appendToLastUserMessage(trailingMessages, scratchpadBlock);
+    if (scratchpadEnabled) {
+      const scratchpadBlock = resolveScratchpadBlock(conversationId, currentTurn, config.scratchpad.injectDiffCount);
+      if (scratchpadBlock) contextParts.push(scratchpadBlock);
+    }
+
+    if (contextParts.length > 0) {
+      const currentContext = `<current_context>\n${contextParts.join('\n\n')}\n</current_context>`;
+      trailingMessages = prependToLastUserMessage(messages, currentContext);
+    }
   }
 
   const { system, messages: assembled } =
@@ -447,9 +472,11 @@ function resolvePromptOptions(req, containers, model, presetOverride) {
     // passes it. The real send paths always resolve from the conversation.
     preset: presetOverride !== undefined ? presetOverride : resolvePromptPreset(userId, conversation),
     profileEnabled: resolveProfileEnabled(persona),
+    hasProfile: hasProfileData(profile),
     auxExpressions: resolveAuxExpressionsActive(userId),
     macros: {
-      personaName: persona?.name || '',
+      personaName: (typeof persona?.name === 'string' ? persona.name.trim() : '')
+        || (typeof req.body?.personaName === 'string' ? req.body.personaName.trim() : ''),
       userName: resolveUserName(profile, dal.findUserById(userId)?.display_name),
       profileText: renderProfile(profile),
       workspaceName: containers.workspace?.name || '',
@@ -1094,7 +1121,10 @@ router.post('/preview', asyncHandler(async (req, res) => {
     ...promptOptions,
     scratchpad: scratchpadEnabled,
   }).blocks;
-  promptBlocks.push(describeContextAck(promptOptions, !!requestContext?.text));
+  const profileMsgBlock = describeProfileMessageBlock(promptOptions);
+  if (profileMsgBlock) promptBlocks.push(profileMsgBlock);
+  const hasLeadingContext = Boolean(profileMsgBlock?.included || requestContext?.text);
+  promptBlocks.push(describeContextAck(promptOptions, hasLeadingContext));
   // Message-layer too since PC-01, so it is described alongside the ack rather
   // than appearing in the system-prompt list composeSystemPrompt returns.
   promptBlocks.push(describeSessionState(promptOptions));

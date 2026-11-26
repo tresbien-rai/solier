@@ -20,6 +20,7 @@ const { executeEditFile } = require('../tools/editFile');
 const {
   resolveActiveFileBlock,
   appendToLastUserMessage,
+  prependToLastUserMessage,
   _selectActiveRevisions,
 } = require('./activeFiles');
 
@@ -84,6 +85,34 @@ function restoreDrive() {
     await check('no user message → unchanged', () => {
       const msgs = [{ role: 'assistant', content: 'x' }];
       assert.strictEqual(appendToLastUserMessage(msgs, 'BLOCK'), msgs);
+    });
+
+    console.log('\n1b. prependToLastUserMessage (pure, DF-02)...');
+    await check('prepends to a string user message', () => {
+      const out = prependToLastUserMessage(
+        [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'yo' }, { role: 'user', content: 'more' }],
+        'CTX'
+      );
+      assert.strictEqual(out[2].content, 'CTX\n\nmore');
+      assert.strictEqual(out[0].content, 'hi', 'earlier user message untouched');
+    });
+    await check('handles empty string user message cleanly', () => {
+      const out = prependToLastUserMessage([{ role: 'user', content: '' }], 'CTX');
+      assert.strictEqual(out[0].content, 'CTX');
+    });
+    await check('prepends a text block ahead of array content (mixed & image-only turns)', () => {
+      const imgBlock = { type: 'image', source: { type: 'base64', data: 'abc' } };
+      const mixed = prependToLastUserMessage([{ role: 'user', content: [imgBlock, { type: 'text', text: 'q' }] }], 'CTX');
+      assert.deepStrictEqual(mixed[0].content[0], { type: 'text', text: 'CTX' });
+      assert.deepStrictEqual(mixed[0].content[1], imgBlock);
+      assert.deepStrictEqual(mixed[0].content[2], { type: 'text', text: 'q' });
+
+      const imageOnly = prependToLastUserMessage([{ role: 'user', content: [imgBlock] }], 'CTX');
+      assert.deepStrictEqual(imageOnly[0].content, [{ type: 'text', text: 'CTX' }, imgBlock]);
+    });
+    await check('prepend with no user message → unchanged', () => {
+      const msgs = [{ role: 'assistant', content: 'x' }];
+      assert.strictEqual(prependToLastUserMessage(msgs, 'CTX'), msgs);
     });
 
     console.log('\n2. selectActiveRevisions windowing (pure)...');

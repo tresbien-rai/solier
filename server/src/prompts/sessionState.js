@@ -121,4 +121,22 @@ function buildSessionState({ workspace = null, project = null, conversationId = 
   ].join('\n');
 }
 
-module.exports = { buildSessionState };
+/**
+ * True when the chat has any workspace/project container, active tools,
+ * scratchpad, or conversation files worth reporting in `<current_context>`.
+ * Bare chats (no container, file tools off, scratchpad off, 0 chat files)
+ * omit `<current_context>` completely so pure RP/casual chats stay clean (DF-02).
+ */
+function hasSessionContext({ workspace = null, project = null, conversationId = null, toolsEnabled = false, scratchpadEnabled = false } = {}) {
+  if (workspace || project || toolsEnabled || scratchpadEnabled) return true;
+  if (!conversationId) return false;
+  try {
+    const rows = dal.listConversationFiles(conversationId);
+    return Array.isArray(rows) && rows.length > 0;
+  } catch (err) {
+    logger.warn({ msg: err.message }, 'session_state conversation file check failed');
+    return false;
+  }
+}
+
+module.exports = { buildSessionState, hasSessionContext };

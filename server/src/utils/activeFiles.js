@@ -227,9 +227,41 @@ function appendToLastUserMessage(messages, block) {
   return copy;
 }
 
+/**
+ * Prepend a text block ahead of the last user message's content, returning a
+ * NEW array (never mutates the caller's messages). Handles both string content
+ * and Anthropic/Gemini content-block arrays (including image-only turns with no
+ * caption). Used by DF-02 to place `<current_context>` right before the user's
+ * latest words so the user's request lands last with peak recency.
+ * @param {Array} messages
+ * @param {string} block
+ * @returns {Array}
+ */
+function prependToLastUserMessage(messages, block) {
+  if (!block) return messages;
+  const idx = [...messages].reverse().findIndex((m) => m.role === 'user');
+  if (idx === -1) return messages;
+  const realIdx = messages.length - 1 - idx;
+  const target = messages[realIdx];
+
+  let newContent;
+  if (typeof target.content === 'string') {
+    newContent = target.content ? `${block}\n\n${target.content}` : block;
+  } else if (Array.isArray(target.content)) {
+    newContent = [{ type: 'text', text: block }, ...target.content];
+  } else {
+    return messages;
+  }
+
+  const copy = messages.slice();
+  copy[realIdx] = { ...target, content: newContent };
+  return copy;
+}
+
 module.exports = {
   resolveActiveFileBlock,
   appendToLastUserMessage,
+  prependToLastUserMessage,
   // exported for tests
   _selectActiveRevisions: selectActiveRevisions,
   _describeInjectedFile: describeInjectedFile,

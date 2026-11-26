@@ -32,59 +32,41 @@ const BLOCKS_VERSION = 1;
 const PRESET_NONE = 'none';
 
 /**
- * The system-layer blocks, in their default order. Order here IS the built-in
- * order, so a preset that only edits text renders in the familiar sequence.
+ * The system-layer blocks, in their default order (DF-02).
  *
- * `kind`:
- *   'text'    a section whose content comes from the built-in or an override
- *   'persona' the position marker for the persona's own prompt (its text comes
- *             from the persona record, never from the preset)
+ *   'orientation'   `<operating_environment>` framing (editable)
+ *   'persona'       `<main_persona>` position marker (text comes from persona)
+ *   'capabilities'  protected `<capabilities>` sub-layer (position movable,
+ *                   server-managed content wrapping active Workspace/Project,
+ *                   File Tools, Scratchpad, and Avatar Expressions)
  */
-const SYSTEM_BLOCK_IDS = ['orientation', 'profile', 'expressions', 'scratchpad', 'persona'];
-
-// NOTE on `profile` (UP-03): it is listed second because that is its BUILT-IN
-// position — right after the orientation, so the model learns who it is talking
-// to before anything else. A preset saved before UP-03 has no `profile` in its
-// stored order, and normalizeBlocks APPENDS unknown-to-the-preset blocks rather
-// than slotting them in at the built-in index (see the comment there). Such a
-// preset therefore renders the profile LAST, after the persona. That is the
-// deliberate trade SS-02 already made: a user's explicit order wins over our
-// idea of where a new block belongs, and re-ordering it is one drag in the
-// preset editor.
+const SYSTEM_BLOCK_IDS = ['orientation', 'persona', 'capabilities'];
 
 /**
- * Blocks that are NOT part of the system layer. The assembly positions these,
- * not the user's `order`; they are listed here so they are still described,
- * and — where the block allows it — editable and resettable.
+ * Blocks that sit in the MESSAGE layer by default (DF-02).
  *
- *   'context_ack'  the synthetic assistant turn after injected KB context.
- *   'state'        the `<session_state>` block (SS-02). Its text is generated,
- *                  not stored — the server resolves it per request from the
- *                  live workspace/project/scratchpad/file state — and it may
- *                  be neither edited nor disabled, because a prompt that lies
- *                  about state is worse than one that omits it
- *                  (docs/design/SESSION_STATE_DESIGN.md, D3).
- *
- * `state` was a SYSTEM block until PC-01. It moved because it reports the
- * scratchpad's length and the per-scope file counts, which change during
- * ordinary tool use: sitting in the system prompt, that churn invalidated the
- * cached prefix for the WHOLE conversation on most turns, since a system
- * change invalidates the message cache behind it. In the message layer it sits
- * with the `<active_files>` and scratchpad blocks it already refers to — after
- * the cacheable history instead of in front of it
- * (docs/design/PROMPT_CACHING_DESIGN.md, D1).
- *
- * The cost is that a preset can no longer position it. That knob only ever
- * meant "where among the other system blocks", which is not a question a
- * message-layer block has.
+ *   'profile'      `<user_profile>` — defaults to the start of the Message
+ *                  layer (cached prefix, paired with Workspace/Project KB),
+ *                  and may optionally be placed in `order` (System layer) by
+ *                  a preset.
+ *   'context_ack'  synthetic assistant reply after leading context (`profile`
+ *                  and/or Workspace/Project KB).
+ *   'state'        `<current_context>` / `<session_state>` — generated per
+ *                  turn and prepended before the latest user message (omitted
+ *                  on bare chats). Server-generated; never text-overridable.
  */
-const MESSAGE_BLOCK_IDS = ['context_ack', 'state'];
+const MESSAGE_BLOCK_IDS = ['profile', 'context_ack', 'state'];
+
+/** Blocks allowed to live in EITHER `order` (System) or the Message layer. */
+const CROSS_LAYER_BLOCK_IDS = ['profile'];
 
 /**
- * The one id a stored `order` may contain that is no longer a system block.
- * Presets written before PC-01 all carry it; see validateBlocks.
+ * Legacy block ids from pre-DF-02 presets (expressions/scratchpad moved inside
+ * the protected `<capabilities>` sub-layer; `state` left `order` in PC-01).
+ * Tolerated in stored presets so older presets remain loadable and saveable.
  */
-const LEGACY_ORDER_ID = 'state';
+const LEGACY_ORDER_IDS = ['state', 'expressions', 'scratchpad'];
+const LEGACY_BLOCK_IDS = ['expressions', 'scratchpad'];
 
 const ALL_BLOCK_IDS = [...SYSTEM_BLOCK_IDS, ...MESSAGE_BLOCK_IDS];
 
@@ -98,7 +80,11 @@ const MAX_NAME_CHARS = 80;
 function defaultBlocks() {
   const blocks = {};
   for (const id of ALL_BLOCK_IDS) {
-    blocks[id] = { enabled: true, text: null };
+    blocks[id] = {
+      enabled: true,
+      text: null,
+      ...(CROSS_LAYER_BLOCK_IDS.includes(id) ? { layer: 'message' } : {}),
+    };
   }
   return { version: BLOCKS_VERSION, order: [...SYSTEM_BLOCK_IDS], blocks };
 }
@@ -121,24 +107,18 @@ function normalizeBlocks(raw) {
 
   const out = { version: BLOCKS_VERSION, order: [], blocks: base.blocks };
 
-  // Order: keep the user's sequence, drop unknown ids, then append any known
-  // system block they don't mention (a block added by a later version must not
-  // silently vanish from an older preset).
+  // Order: keep the user's sequence of valid system-layer blocks (plus any
+  // cross-layer block like `profile` that they explicitly placed in `order`),
+  // drop unknown/legacy ids, then append any missing required system blocks.
+  const allowedInOrder = new Set([...SYSTEM_BLOCK_IDS, ...CROSS_LAYER_BLOCK_IDS]);
   const wanted = Array.isArray(raw.order) ? raw.order : base.order;
   const seen = new Set();
   for (const id of wanted) {
-    if (SYSTEM_BLOCK_IDS.includes(id) && !seen.has(id)) {
+    if (allowedInOrder.has(id) && !seen.has(id)) {
       seen.add(id);
       out.order.push(id);
     }
   }
-  // Appended, NOT slotted in at their built-in position. Tried that so a newly
-  // added block (SS-02's `state`) would land mid-prompt for existing presets;
-  // it breaks the stronger guarantee that the user's explicit order wins. A
-  // preset storing just ['persona'] means "persona first", and slotting the
-  // missing blocks by built-in index silently moves it last. A new block
-  // arriving at the end is cosmetic and draggable; losing the user's ordering
-  // is not.
   for (const id of SYSTEM_BLOCK_IDS) {
     if (!seen.has(id)) out.order.push(id);
   }
@@ -147,10 +127,23 @@ function normalizeBlocks(raw) {
   out.blocks = {};
   for (const id of ALL_BLOCK_IDS) {
     const b = rawBlocks[id] && typeof rawBlocks[id] === 'object' ? rawBlocks[id] : {};
-    out.blocks[id] = {
-      enabled: b.enabled !== false, // default on
-      text: typeof b.text === 'string' ? b.text : null,
+    const isLocked = id === 'state' || id === 'capabilities';
+    const entry = {
+      enabled: isLocked ? true : b.enabled !== false, // default on; locked blocks stay on
+      text: (isLocked || id === 'persona') ? null : (typeof b.text === 'string' ? b.text : null),
     };
+    if (CROSS_LAYER_BLOCK_IDS.includes(id)) {
+      // Explicit layer wins; missing layer defaults to 'message' (DF-02) so
+      // legacy v1 presets whose `order` listed `profile` migrate cleanly to the
+      // Message layer instead of pinning `profile` in System.
+      entry.layer = b.layer === 'system' ? 'system' : 'message';
+      if (entry.layer === 'system' && !out.order.includes(id)) {
+        out.order.push(id);
+      } else if (entry.layer === 'message') {
+        out.order = out.order.filter((x) => x !== id);
+      }
+    }
+    out.blocks[id] = entry;
   }
   return out;
 }
@@ -164,16 +157,12 @@ function validateBlocks(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { ok: false, error: 'Preset blocks must be an object.' };
   }
+  const allowedInOrder = new Set([...SYSTEM_BLOCK_IDS, ...CROSS_LAYER_BLOCK_IDS]);
   if (raw.order !== undefined) {
     if (!Array.isArray(raw.order)) return { ok: false, error: '"order" must be an array.' };
     for (const id of raw.order) {
-      // `state` is tolerated but not honoured (PC-01). Every preset saved
-      // before it left the system layer carries it here, and rejecting the id
-      // would make those presets unsaveable — an error the user could not act
-      // on, about a block they never chose to place. normalizeBlocks drops it
-      // from the order instead, and the first save after that writes it out.
-      if (id === LEGACY_ORDER_ID) continue;
-      if (!SYSTEM_BLOCK_IDS.includes(id)) {
+      if (LEGACY_ORDER_IDS.includes(id)) continue;
+      if (!allowedInOrder.has(id)) {
         return { ok: false, error: `Unknown block in "order": ${String(id)}` };
       }
     }
@@ -187,6 +176,7 @@ function validateBlocks(raw) {
     }
     let total = 0;
     for (const [id, b] of Object.entries(raw.blocks)) {
+      if (LEGACY_BLOCK_IDS.includes(id)) continue;
       if (!ALL_BLOCK_IDS.includes(id)) {
         return { ok: false, error: `Unknown block: ${id}` };
       }
@@ -196,16 +186,25 @@ function validateBlocks(raw) {
       if (b.enabled !== undefined && typeof b.enabled !== 'boolean') {
         return { ok: false, error: `Block "${id}": "enabled" must be true or false.` };
       }
-      // `state` is plumbing (docs/design/SESSION_STATE_DESIGN.md, D3): its position is
-      // the user's to choose, its content and presence are not. Rejected on the
-      // write path so an edit that would take effect is refused loudly, rather
-      // than silently ignored later by the composer.
+      if (b.layer !== undefined) {
+        if (!CROSS_LAYER_BLOCK_IDS.includes(id) || (b.layer !== 'system' && b.layer !== 'message')) {
+          return { ok: false, error: `Block "${id}": invalid layer "${String(b.layer)}".` };
+        }
+      }
       if (id === 'state') {
         if (b.enabled === false) {
-          return { ok: false, error: 'The session-state block cannot be turned off — it can only be moved.' };
+          return { ok: false, error: 'The current-context block cannot be turned off — it is managed from live session state.' };
         }
         if (typeof b.text === 'string') {
-          return { ok: false, error: 'The session-state block cannot be edited — its text is generated from the live workspace state.' };
+          return { ok: false, error: 'The current-context block cannot be edited — its text is generated from live workspace state.' };
+        }
+      }
+      if (id === 'capabilities') {
+        if (b.enabled === false) {
+          return { ok: false, error: 'The capabilities sub-layer cannot be turned off — individual features are toggled per chat or in Settings.' };
+        }
+        if (typeof b.text === 'string') {
+          return { ok: false, error: 'The capabilities sub-layer is server-managed to protect tool reliability and cannot be edited directly.' };
         }
       }
       if (b.text !== undefined && b.text !== null) {
@@ -303,7 +302,7 @@ function buildMacroValues(ctx = {}) {
 const MACRO_REFERENCE = [
   { name: 'char', description: "The active persona's name" },
   { name: 'user', description: 'What to call you — your Profile name, else your account name' },
-  { name: 'profile', description: 'Your Profile: preferred name + enabled sections' },
+  { name: 'profile', description: 'Your Profile: enabled sections (your name is in {{user}})' },
   { name: 'expressions', description: "The persona's expression names, comma-separated" },
   { name: 'workspace', description: "The chat's workspace name, if any" },
   { name: 'project', description: "The chat's project name, if any" },
@@ -317,6 +316,7 @@ module.exports = {
   PRESET_NONE,
   SYSTEM_BLOCK_IDS,
   MESSAGE_BLOCK_IDS,
+  CROSS_LAYER_BLOCK_IDS,
   ALL_BLOCK_IDS,
   MAX_BLOCK_CHARS,
   MAX_PRESET_CHARS,

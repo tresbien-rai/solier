@@ -20,10 +20,13 @@
  */
 
 const assert = require('node:assert');
+const config = require('../config');
 const {
   buildSystemPrompt, buildContextAck, composeSystemPrompt, describeContextAck,
   sessionStateBlock, describeSessionState,
+  buildCapabilitiesBlock, buildProfileMessageBlock, describeProfileMessageBlock,
   ORIENTATION, CONTEXT_ACK,
+  CAPABILITY_WORKSPACE, CAPABILITY_FILE_TOOLS, SCRATCHPAD_SECTION, EXPRESSION_SECTION,
 } = require('./tessera');
 const {
   PRESET_NONE,
@@ -53,85 +56,71 @@ function check(label, fn) {
 const PERSONA = 'You are Vela, a terse navigator.';
 const EXPRESSIONS = ['neutral', 'happy', 'wry'];
 
-/** The built-in composition, rebuilt from its parts. */
-function golden({ expressions = false, scratchpad = false, persona = false } = {}) {
-  let out = ORIENTATION;
-  if (expressions) {
-    out += `
-
-## Expression
-
-The user sees an avatar whose face reflects your mood. Begin your visible reply
-with one expression tag on the first line:
-
-[expression: name]
-
-Available expressions: ${EXPRESSIONS.join(', ')}
-
-Rules:
-- Use exactly one tag per reply, from the list above (pick the closest match if
-  none is exact), and let it carry into your tone.
-- On tool-using turns, put the tag once at the start of your final reply text —
-  don't repeat it before and after tool calls.
-- The tag is stripped before display, so never mention, explain, or apologize
-  for it.`;
+/** The built-in DF-02 composition, rebuilt from its parts. */
+function golden({
+  expressions = false,
+  scratchpad = false,
+  hasContainer = false,
+  toolsEnabled = false,
+  persona = false,
+  personaName = '',
+} = {}) {
+  const parts = [ORIENTATION];
+  if (persona) {
+    const heading = personaName ? `# Persona: ${personaName}` : '# Persona';
+    parts.push(`<main_persona>\n${heading}\nThis is who you are.\n\n${PERSONA}\n</main_persona>`);
   }
-  if (scratchpad) {
-    out += `
-
-## Scratchpad
-
-This conversation has a shared scratchpad beside the chat that both you and the
-user edit directly via \`write_scratchpad\` (replace whole pad) and
-\`edit_scratchpad\` (targeted edit).
-
-When to use it:
-- **Use the scratchpad** whenever you and the user are developing evolving work
-  — plans, outlines, drafts, specs, checklists, comparisons, or structured
-  notes. Start it proactively even if \`<session_state>\` shows it is empty.
-- **Stay in chat** for brief answers, quick questions, and discussion about the
-  work. Explain what you changed and why in chat instead of duplicating the
-  scratchpad's contents.
-
-How to maintain it:
-- **Always call the tool to make changes.** Writing a draft in chat or saying
-  you updated the scratchpad does not modify it — call \`write_scratchpad\` or
-  \`edit_scratchpad\` first.
-- **Keep it current, not a log.** Replace, reorganize, and trim superseded
-  ideas in place rather than appending. Treat the user's edits as part of your
-  shared state.
-- Use \`write_scratchpad\` to start the pad, reorganize it, or rewrite a short
-  pad; use \`edit_scratchpad\` for targeted changes to a longer pad (matching
-  \`<current_content>\` verbatim).`;
+  const caps = [];
+  if (hasContainer) caps.push(CAPABILITY_WORKSPACE);
+  if (toolsEnabled) caps.push(CAPABILITY_FILE_TOOLS);
+  if (scratchpad) caps.push(SCRATCHPAD_SECTION);
+  if (expressions) caps.push(EXPRESSION_SECTION.replace('{{expressions}}', EXPRESSIONS.join(', ')));
+  if (caps.length > 0) {
+    parts.push(
+      `<capabilities>\n# Capabilities\nThis section lists what context, tools, and abilities you have access to in this session.\n\n${caps.join('\n\n')}\n</capabilities>`
+    );
   }
-  if (persona) out += `\n\n---\n\n${PERSONA}`;
-  return out;
+  return parts.join('\n\n');
 }
 
 console.log('='.repeat(60));
-console.log('Prompt presets (AP-01)');
+console.log('Prompt presets (AP-01 / DF-02)');
 console.log('='.repeat(60));
 
-console.log('\n1. Byte-identity with the pre-AP-01 output (no preset)...');
+console.log('\n1. Built-in DF-02 assembly (no preset)...');
 
 for (const expressions of [false, true]) {
   for (const scratchpad of [false, true]) {
-    for (const persona of [false, true]) {
-      const label = `expressions=${expressions} scratchpad=${scratchpad} persona=${persona}`;
-      check(label, () => {
-        const actual = buildSystemPrompt(
-          persona ? PERSONA : '',
-          expressions ? EXPRESSIONS : [],
-          { scratchpad }
-        );
-        assert.strictEqual(actual, golden({ expressions, scratchpad, persona }));
-      });
+    for (const hasContainer of [false, true]) {
+      for (const toolsEnabled of [false, true]) {
+        for (const persona of [false, true]) {
+          const label = `expr=${expressions} pad=${scratchpad} container=${hasContainer} tools=${toolsEnabled} persona=${persona}`;
+          check(label, () => {
+            const actual = buildSystemPrompt(
+              persona ? PERSONA : '',
+              expressions ? EXPRESSIONS : [],
+              { scratchpad, hasContainer, toolsEnabled }
+            );
+            assert.strictEqual(
+              actual,
+              golden({ expressions, scratchpad, hasContainer, toolsEnabled, persona })
+            );
+          });
+        }
+      }
     }
   }
 }
 
-check('the context ack is unchanged', () => {
+check('persona heading includes {{char}} when personaName is given', () => {
+  const out = buildSystemPrompt(PERSONA, [], { macros: { personaName: 'Vela' } });
+  assert.strictEqual(out, golden({ persona: true, personaName: 'Vela' }));
+  assert.ok(out.includes('<main_persona>\n# Persona: Vela\nThis is who you are.'));
+});
+
+check('the context ack is voice-neutral', () => {
   assert.strictEqual(buildContextAck(), CONTEXT_ACK);
+  assert.strictEqual(CONTEXT_ACK, 'Reference context noted.');
 });
 
 check('a persona prompt is trimmed, as before', () => {
@@ -146,27 +135,28 @@ check('an override replaces only its own block', () => {
   preset.blocks.orientation.text = 'CUSTOM ORIENTATION';
   const out = buildSystemPrompt(PERSONA, EXPRESSIONS, { preset });
   assert.ok(out.startsWith('CUSTOM ORIENTATION'), 'override applied');
-  assert.ok(!out.includes('# Solier'), 'built-in orientation gone');
-  assert.ok(out.includes('## Expression'), 'untouched block still built-in');
-  assert.ok(out.endsWith(PERSONA), 'persona still last');
+  assert.ok(!out.includes(`# ${config.brand}`), 'built-in orientation gone');
+  assert.ok(out.includes('<main_persona>'), 'persona wrapped');
+  assert.ok(out.includes('<capabilities>'), 'capabilities present');
+  assert.ok(out.includes('## Avatar Expressions'), 'expression sub-section present');
 });
 
-check('reordering moves blocks, persona included', () => {
+check('reordering moves blocks, persona and capabilities included', () => {
   const preset = defaultBlocks();
-  preset.order = ['persona', 'orientation', 'expressions', 'scratchpad'];
-  const out = buildSystemPrompt(PERSONA, [], { preset });
-  assert.ok(out.startsWith(PERSONA), 'persona leads');
-  // Nothing above it to separate it from, so no rule.
-  assert.ok(!out.includes('---'), 'separator dropped when the persona leads');
-  assert.ok(out.includes('# Solier'), 'orientation follows');
+  preset.order = ['persona', 'capabilities', 'orientation'];
+  const out = buildSystemPrompt(PERSONA, EXPRESSIONS, { preset });
+  const pIdx = out.indexOf('<main_persona>');
+  const cIdx = out.indexOf('<capabilities>');
+  const oIdx = out.indexOf('<operating_environment>');
+  assert.ok(pIdx === 0 && pIdx < cIdx && cIdx < oIdx, 'order respected');
 });
 
 check('a disabled block is omitted', () => {
   const preset = defaultBlocks();
   preset.blocks.orientation.enabled = false;
   const out = buildSystemPrompt(PERSONA, EXPRESSIONS, { preset });
-  assert.ok(!out.includes('# Solier'), 'orientation gone');
-  assert.ok(out.includes('## Expression'), 'the rest survives');
+  assert.ok(!out.includes(`# ${config.brand}`), 'orientation gone');
+  assert.ok(out.includes('## Avatar Expressions'), 'the rest survives');
 });
 
 check('a disabled context_ack renders as empty', () => {
@@ -175,46 +165,99 @@ check('a disabled context_ack renders as empty', () => {
   assert.strictEqual(buildContextAck({ preset }), '');
 });
 
-check('an all-disabled preset with no persona yields an empty prompt', () => {
+check('disabling all mutable system blocks with no active capabilities yields empty prompt', () => {
   const preset = defaultBlocks();
-  for (const id of SYSTEM_BLOCK_IDS) preset.blocks[id].enabled = false;
+  preset.blocks.orientation.enabled = false;
+  preset.blocks.persona.enabled = false;
   assert.strictEqual(buildSystemPrompt('', [], { preset }), '');
 });
 
-console.log('\n3. A preset cannot enable a capability (D3)...');
+console.log('\n3. Protected <capabilities> sub-layer & gating (D3 / DF-02)...');
 
-check('scratchpad text stays out when the pad is inactive', () => {
-  const preset = defaultBlocks();
-  preset.blocks.scratchpad.text = 'PAD RULES';
-  const out = buildSystemPrompt(PERSONA, [], { preset, scratchpad: false });
-  assert.ok(!out.includes('PAD RULES'), 'not injected while the pad is off');
-  assert.ok(buildSystemPrompt(PERSONA, [], { preset, scratchpad: true }).includes('PAD RULES'),
-    'injected once the pad is on');
+check('capabilities omits completely when nothing is active', () => {
+  const out = buildSystemPrompt(PERSONA, [], {
+    hasContainer: false, toolsEnabled: false, scratchpad: false,
+  });
+  assert.ok(!out.includes('<capabilities>'), 'no empty wrapper');
 });
 
-check('the expression block stays out when the persona has none', () => {
-  const preset = defaultBlocks();
-  preset.blocks.expressions.text = 'EXPRESSION RULES';
-  assert.ok(!buildSystemPrompt(PERSONA, [], { preset }).includes('EXPRESSION RULES'));
-  assert.ok(buildSystemPrompt(PERSONA, EXPRESSIONS, { preset }).includes('EXPRESSION RULES'));
+check('file tool names NEVER appear when toolsEnabled is false, even inside a workspace', () => {
+  const out = buildSystemPrompt(PERSONA, [], { hasContainer: true, toolsEnabled: false });
+  assert.ok(out.includes('## Workspace & Project'), 'workspace guidance included');
+  assert.ok(!out.includes('## File Tools'), 'file tools section omitted');
+  for (const name of ['list_files', 'read_file', 'create_file', 'edit_file', 'move_file']) {
+    assert.ok(!out.includes(name), `${name} must not be advertised when tools are off`);
+  }
+});
+
+check('file tool guidance appears only when toolsEnabled is true', () => {
+  const out = buildSystemPrompt(PERSONA, [], { hasContainer: true, toolsEnabled: true });
+  assert.ok(out.includes('## Workspace & Project'));
+  assert.ok(out.includes('## File Tools'));
+  for (const name of ['list_files', 'read_file', 'create_file', 'edit_file', 'move_file']) {
+    assert.ok(out.includes(name), `${name} listed when tools are on`);
+  }
+});
+
+check('scratchpad sub-section stays out when the pad is inactive', () => {
+  const off = buildSystemPrompt(PERSONA, [], { scratchpad: false });
+  assert.ok(!off.includes('## Scratchpad'));
+  const on = buildSystemPrompt(PERSONA, [], { scratchpad: true });
+  assert.ok(on.includes('## Scratchpad'));
+  assert.ok(on.includes('<capabilities>') && on.includes('</capabilities>'));
 });
 
 check('the expression list comes from the persona, not the caller', () => {
-  const preset = defaultBlocks();
-  preset.blocks.expressions.text = 'Moods: {{expressions}}';
-  // A caller trying to force the macro is ignored — the sanitized set wins.
   const out = buildSystemPrompt(PERSONA, EXPRESSIONS, {
-    preset,
     macros: { expressionNames: ['smug', 'injected'] },
   });
-  assert.ok(out.includes('Moods: neutral, happy, wry'), out.slice(0, 200));
+  assert.ok(out.includes('neutral, happy, wry'), out.slice(0, 400));
+  assert.ok(!out.includes('injected'));
 });
 
-check('reserved + malformed expression names never reach the prompt', () => {
-  const preset = defaultBlocks();
-  preset.blocks.expressions.text = 'Moods: {{expressions}}';
-  const out = buildSystemPrompt(PERSONA, ['generating', 'bad name', 'ok'], { preset });
-  assert.ok(out.includes('Moods: ok'), 'only the valid name survives');
+check('reserved + malformed expression names never reach the prompt (including direct buildCapabilitiesBlock calls)', () => {
+  const out = buildSystemPrompt(PERSONA, ['generating', 'bad name', 'ok'], {});
+  assert.ok(out.includes('List of available avatar expressions: ok'), 'only the valid name survives');
+  const direct = buildCapabilitiesBlock(['generating', 'bad name', 'ok'], {});
+  assert.ok(direct.includes('List of available avatar expressions: ok'));
+  assert.ok(!direct.includes('generating') && !direct.includes('bad name'));
+});
+
+check('capabilities cannot be disabled or text-overridden on write or read', () => {
+  const dis = validateBlocks({ blocks: { capabilities: { enabled: false } } });
+  assert.strictEqual(dis.ok, false);
+  assert.match(dis.error, /cannot be turned off/);
+  const txt = validateBlocks({ blocks: { capabilities: { text: 'hijack' } } });
+  assert.strictEqual(txt.ok, false);
+  assert.match(txt.error, /cannot be edited/);
+  const emptyTxt = validateBlocks({ blocks: { capabilities: { text: '' } } });
+  assert.strictEqual(emptyTxt.ok, false, 'empty string rejected too');
+
+  // Defense in depth on read: corrupted DB JSON is healed by normalizeBlocks
+  // and still emits built-in capabilities.
+  const corrupted = { blocks: { capabilities: { enabled: false, text: 'hijack' } } };
+  const norm = normalizeBlocks(corrupted);
+  assert.strictEqual(norm.blocks.capabilities.enabled, true);
+  assert.strictEqual(norm.blocks.capabilities.text, null);
+  const prompt = buildSystemPrompt(PERSONA, EXPRESSIONS, { preset: corrupted });
+  assert.ok(prompt.includes('<capabilities>') && !prompt.includes('hijack'));
+});
+
+check('legacy v1 presets migrate profile to Message layer and strip expressions/scratchpad', () => {
+  const v1 = {
+    order: ['orientation', 'profile', 'expressions', 'scratchpad', 'persona'],
+    blocks: {
+      orientation: { enabled: true, text: 'CUSTOM' },
+      expressions: { enabled: true, text: 'old expr' },
+      scratchpad: { enabled: true, text: 'old pad' },
+    },
+  };
+  assert.strictEqual(validateBlocks(v1).ok, true, 'v1 presets stay saveable');
+  const norm = normalizeBlocks(v1);
+  assert.ok(!norm.order.includes('expressions') && !norm.order.includes('scratchpad'));
+  assert.ok(norm.order.includes('capabilities'), 'capabilities added to order');
+  assert.strictEqual(norm.blocks.profile.layer, 'message', 'legacy v1 preset migrates profile to Message layer');
+  assert.ok(!norm.order.includes('profile'), 'profile removed from System order unless layer: "system" is explicit');
 });
 
 console.log('\n4. Macros...');
@@ -340,41 +383,66 @@ check('sources name where each block\'s text came from', () => {
   const { blocks } = composeSystemPrompt(PERSONA, EXPRESSIONS, { preset });
   const by = Object.fromEntries(blocks.map(b => [b.id, b]));
   assert.strictEqual(by.orientation.source, 'preset', 'overridden');
-  assert.strictEqual(by.expressions.source, 'built-in', 'untouched');
+  assert.strictEqual(by.orientation.layer, 'system');
   assert.strictEqual(by.persona.source, 'persona', 'the persona’s own prompt');
+  assert.strictEqual(by.capabilities.source, 'built-in', 'server-managed capabilities');
 });
 
 check('every exclusion carries a reason', () => {
   const preset = defaultBlocks();
   preset.blocks.orientation.enabled = false;
-  // No expressions, no scratchpad, no persona prompt → three different reasons.
+  // No capabilities, no persona prompt → distinct reasons.
   const { blocks } = composeSystemPrompt('', [], { preset, scratchpad: false });
   const by = Object.fromEntries(blocks.map(b => [b.id, b]));
   assert.strictEqual(by.orientation.reason, 'disabled');
-  assert.strictEqual(by.expressions.reason, 'no-expressions');
-  assert.strictEqual(by.scratchpad.reason, 'scratchpad-inactive');
   assert.strictEqual(by.persona.reason, 'no-persona-prompt');
+  assert.strictEqual(by.capabilities.reason, 'no-capabilities');
   assert.ok(blocks.every(b => b.included || b.reason), 'no unexplained exclusion');
 });
 
-check('auxExpressions omits the expressions block with reason aux-expressions', () => {
+check('auxExpressions omits Avatar Expressions from capabilities', () => {
   const off = composeSystemPrompt(PERSONA, EXPRESSIONS, { auxExpressions: false });
-  const offExpr = off.blocks.find(b => b.id === 'expressions');
-  assert.strictEqual(offExpr.included, true, 'included when auxExpressions is false');
+  const offCap = off.blocks.find(b => b.id === 'capabilities');
+  assert.strictEqual(offCap.included, true, 'included when auxExpressions is false');
+  assert.ok(off.text.includes('## Avatar Expressions'));
 
   const on = composeSystemPrompt(PERSONA, EXPRESSIONS, { auxExpressions: true });
-  const onExpr = on.blocks.find(b => b.id === 'expressions');
-  assert.strictEqual(onExpr.included, false, 'omitted when auxExpressions is true');
-  assert.strictEqual(onExpr.reason, 'aux-expressions');
-  assert.ok(!on.text.includes('## Expression'), 'expression instructions absent from prompt');
+  const onCap = on.blocks.find(b => b.id === 'capabilities');
+  assert.strictEqual(onCap.included, false, 'capabilities omitted when only expressions were active');
+  assert.strictEqual(onCap.reason, 'no-capabilities');
+  assert.ok(!on.text.includes('## Avatar Expressions'), 'expression instructions absent from prompt');
+
+  const withPad = composeSystemPrompt(PERSONA, EXPRESSIONS, { auxExpressions: true, scratchpad: true });
+  assert.ok(withPad.text.includes('## Scratchpad'), 'other capabilities still included');
+  assert.ok(!withPad.text.includes('## Avatar Expressions'), 'expression sub-section omitted');
 });
 
-check('the context ack is described separately from the system layer', () => {
+check('the context ack, profile, and state carry layer="message" separately from system', () => {
   assert.strictEqual(describeContextAck({}, false).reason, 'no-context');
-  assert.strictEqual(describeContextAck({}, true).included, true);
+  const ack = describeContextAck({}, true);
+  assert.strictEqual(ack.included, true);
+  assert.strictEqual(ack.layer, 'message');
   const off = defaultBlocks();
   off.blocks.context_ack.enabled = false;
   assert.strictEqual(describeContextAck({ preset: off }, true).reason, 'disabled');
+
+  const bareState = describeSessionState({ bareChat: true });
+  assert.strictEqual(bareState.included, false);
+  assert.strictEqual(bareState.reason, 'bare-chat');
+  assert.strictEqual(bareState.layer, 'message');
+
+  const prof = describeProfileMessageBlock({
+    profileEnabled: true,
+    hasProfile: true,
+    macros: { userName: 'Rai', profileText: '### Role\nNavigator.' },
+  });
+  assert.strictEqual(prof.included, true);
+  assert.strictEqual(prof.layer, 'message');
+  assert.strictEqual(buildProfileMessageBlock({
+    profileEnabled: true,
+    hasProfile: true,
+    macros: { userName: 'Rai', profileText: '### Role\nNavigator.' },
+  }), prof.text);
 });
 
 check('buildSystemPrompt and composeSystemPrompt cannot drift', () => {

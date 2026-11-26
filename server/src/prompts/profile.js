@@ -33,9 +33,6 @@ function renderProfile(profile) {
   if (!profile) return '';
   const parts = [];
 
-  const name = (profile.preferredName || '').trim();
-  if (name) parts.push(`They go by **${name}** — use it naturally.`);
-
   for (const section of profile.sections || []) {
     if (!section || section.enabled === false) continue;
     const title = (section.title || '').trim();
@@ -47,6 +44,17 @@ function renderProfile(profile) {
   }
 
   return parts.join('\n\n');
+}
+
+/**
+ * True when the user has written anything on their Profile page — either a
+ * preferred name (which populates `# User: {{user}}` in `<user_profile>`) or
+ * at least one enabled non-empty section.
+ */
+function hasProfileData(profile) {
+  if (!profile) return false;
+  if ((profile.preferredName || '').trim()) return true;
+  return renderProfile(profile) !== '';
 }
 
 /**
@@ -65,4 +73,4 @@ function resolveUserName(profile, accountName) {
   return preferred || (accountName || '').trim();
 }
 
-module.exports = { renderProfile, resolveUserName };
+module.exports = { renderProfile, hasProfileData, resolveUserName };
