@@ -40,6 +40,7 @@ export function updateFixedPersonaPin() {
     const persona = getActivePersona();
     if (!persona || personaModelMode(persona) !== 'fixed') return;
     const layer = getActiveModelConfig();
+    if (!layer.provider || !layer.model) return;
     const cfg = persona.modelConfig || {};
     // `modelParams` present = legacy full snapshot → rewrite to a slim pin.
     if (cfg.provider === layer.provider && cfg.model === layer.model && !cfg.modelParams) return;
@@ -151,7 +152,7 @@ export function saveAllSettingsFromUI() {
         persona.name = elements.assistantName.value || CONFIG.defaults.assistantName;
         persona.tagline = elements.personaTagline.value.trim();
         persona.roleLabel = elements.personaRoleLabel.value.trim();
-        persona.systemPrompt = elements.systemPrompt.value || CONFIG.defaults.systemPrompt;
+        persona.systemPrompt = elements.systemPrompt.value;
         persona.sections = readPersonaSectionFields();
         persona.updatedAt = Date.now();
     }

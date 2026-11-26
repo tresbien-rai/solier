@@ -22,7 +22,7 @@ import { API } from '../api-client.js';
 import { CONFIG } from '../config.js';
 import { getActivePersona, getActiveConversation } from '../state.js';
 import { navigate, renderRail, registerShell } from '../shell.js';
-import { getActiveModelConfig } from '../model-layer.js';
+import { getActiveModelConfig, hasActiveModel } from '../model-layer.js';
 import { saveConversations, createConversation } from '../views/chats.js';
 import { updateStatusBar } from '../status-bar.js';
 import { renderMarkdown, messageActionsHTML } from '../util/markdown.js';
@@ -234,13 +234,20 @@ export function renderChatThread() {
 
     if (messages.length === 0 && !threadIsVisible(state.streamingConversationId)) {
         const modelConfig = getActiveModelConfig();
-        const provider = modelConfig.provider;
-        const hasApiKey = !!state.apiKeyStatus[provider]?.hasKey;
+        const hasModel = hasActiveModel(modelConfig);
+        const hasApiKey = hasModel && !!state.apiKeyStatus[modelConfig.provider]?.hasKey;
+        const hasAnyKey = Object.values(state.apiKeyStatus || {}).some(s => s && s.hasKey);
+        const ready = hasModel && hasApiKey;
+        const setupPrompt = !hasModel
+            ? (hasAnyKey
+                ? 'Pick a model in <strong>Models</strong> to start.'
+                : 'Add an API key and pick a model in <strong>Models</strong> to start.')
+            : 'Add an API key in <strong>Models</strong> to start.';
         elements.messagesContainer.innerHTML = `
             <div class="welcome-message">
-                <h1>${hasApiKey ? escapeHtml(assistantName) : `Welcome to ${escapeHtml(CONFIG.brand)}`}</h1>
-                <p>${hasApiKey ? `Start a conversation with ${escapeHtml(assistantName)}.` : 'Add an API key in <strong>Models</strong> to start a conversation.'}</p>
-                ${hasApiKey ? '' : '<button type="button" class="btn btn-primary btn-pill welcome-models-btn" id="welcomeModelsBtn">Go to Models</button>'}
+                <h1>${ready ? escapeHtml(assistantName) : `Welcome to ${escapeHtml(CONFIG.brand)}`}</h1>
+                <p>${ready ? `Start a conversation with ${escapeHtml(assistantName)}.` : setupPrompt}</p>
+                ${ready ? '' : '<button type="button" class="btn btn-primary btn-pill welcome-models-btn" id="welcomeModelsBtn">Go to Models</button>'}
             </div>
         `;
         const modelsBtn = elements.messagesContainer.querySelector('#welcomeModelsBtn');

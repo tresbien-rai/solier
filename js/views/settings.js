@@ -37,7 +37,7 @@ import { assemblePersonaPrompt } from '../persona-sections.js';
 import { navigate } from '../shell.js';
 import { savePersonas } from '../settings-store.js';
 // AP-05: the inspector runs the real assembly, which needs the active model.
-import { getActiveModelConfig } from '../model-layer.js';
+import { getActiveModelConfig, hasActiveModel } from '../model-layer.js';
 // AP-06: the .tesserapreset exporter's second call site for the shared helper.
 import { downloadBlob } from '../util/blob.js';
 
@@ -1017,6 +1017,10 @@ export async function renderPromptInspector(host, { presetId } = {}) {
     }
 
     const cfg = getActiveModelConfig();
+    if (!hasActiveModel(cfg)) {
+        host.innerHTML = '<p class="setting-desc" style="padding-top:12px;">Set a model in <strong>Models</strong> to preview the assembled prompt.</p>';
+        return;
+    }
     let result;
     try {
         result = await API.chat.preview({

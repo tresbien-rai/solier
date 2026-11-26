@@ -15,7 +15,7 @@ import { state } from '../state.js';
 import { elements } from '../dom.js';
 import { API } from '../api-client.js';
 import {
-    PROVIDERS, providerIconHtml, getActiveModelConfig, getCatalogEntry, applyModelToLayer,
+    PROVIDERS, providerIconHtml, getActiveModelConfig, hasActiveModel, getCatalogEntry, applyModelToLayer,
     getModelParamsForEdit, getParamByPath, setParamByPath,
     paramVisible, descByPath, fmtParamValue, modelParamRules,
     getModelDisplayName, setModelIndicator, ensureActiveModelValid,
@@ -257,14 +257,45 @@ export function removeCustomModel(id, provider) {
     if (index === -1) return;
 
     providerModels.splice(index, 1);
-    saveCustomModels();
 
-    // If the removed model was the layer's selected one, fall back
+    // Clear stale fixed-persona pins pointing at the deleted model so reloading
+    // never resurrects a removed model id into the active layer (DF-01).
+    let clearedPin = false;
+    for (const p of Object.values(state.personas || {})) {
+        if (p?.modelConfig?.mode === 'fixed' && p.modelConfig.provider === provider && p.modelConfig.model === id) {
+            p.modelConfig = { mode: 'fixed', provider: null, model: null };
+            p.updatedAt = Date.now();
+            clearedPin = true;
+        }
+    }
+
+    // If the removed model was the layer's selected one, fall back to another
+    // model in the same provider, else another provider's first model, else unset (DF-01).
     if (modelConfig.provider === provider && modelConfig.model === id) {
-        modelConfig.model = providerModels.length > 0 ? providerModels[0].id : '';
+        if (providerModels.length > 0) {
+            modelConfig.model = providerModels[0].id;
+        } else {
+            let fallbackProvider = null;
+            let fallbackModel = null;
+            for (const [p, list] of Object.entries(state.settings.customModels)) {
+                if (Array.isArray(list) && list.length > 0) {
+                    fallbackProvider = p;
+                    fallbackModel = list[0].id;
+                    break;
+                }
+            }
+            modelConfig.provider = fallbackProvider;
+            modelConfig.model = fallbackModel;
+        }
         loadModelProfileIntoLayer();
         updateFixedPersonaPin();
         persistSettings();
+        setModelIndicator(getModelDisplayName(modelConfig.model));
+        updateSendButtonState();
+    } else if (clearedPin) {
+        persistSettings();
+    } else {
+        saveCustomModels();
     }
 }
 
@@ -391,7 +422,9 @@ export function openModelModal(provider) {
 
 export function selectModel(modelId, provider) {
     const layer = getActiveModelConfig();
-    if (!applyModelToLayer(provider || layer.provider, modelId)) return;
+    const resolvedProvider = provider || layer.provider;
+    if (!resolvedProvider || !modelId) return;
+    if (!applyModelToLayer(resolvedProvider, modelId)) return;
     updateFixedPersonaPin();
     persistSettings();
     updateUI();
@@ -804,7 +837,15 @@ export function addCustomModel(id, name, provider) {
     if (exists) return false;
 
     providerModels.push({ id, name });
-    saveCustomModels();
+    // DF-01: when no model is set yet, auto-activate the first model the user adds
+    // so setup takes one step instead of two.
+    if (!hasActiveModel()) {
+        applyModelToLayer(provider, id);
+        updateFixedPersonaPin();
+        persistSettings();
+    } else {
+        saveCustomModels();
+    }
     return true;
 }
 
@@ -1125,10 +1166,15 @@ export function setupModelsEvents() {
     });
 
     // The model menu opens from the composer chip (in chat) or the Chats page
-    // next-chat strip; wire the persistent composer chip here once.
+    // next-chat strip; wire the persistent composer chip here once. When no
+    // model is set yet, clicking jumps straight to Models (DF-01).
     if (elements.composerModelButton) {
         elements.composerModelButton.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!hasActiveModel()) {
+                navigate({ type: 'models' });
+                return;
+            }
             showModelMenu(elements.composerModelButton);
         });
     }
