@@ -382,42 +382,39 @@ const BLOCK_INFO = {
         // which is BEFORE applyBrand() hears back from the server (BR-01), so a
         // baked-in string would freeze the fallback name.
         get description() {
-            return `What ${CONFIG.brand} is, how it handles persona embodiment, workspace context, and tools.`;
+            return `What ${CONFIG.brand} is (<operating_environment>) and how your persona shares the room with tools.`;
         },
-    },
-    state: {
-        label: 'Session state',
-        description: 'What exists right now — workspace, project, scratchpad, files — including when there is nothing. Always sent, and its text is generated per message. It goes with your latest message rather than in the system prompt, so the rest of the conversation can be cached.',
-        // No text box: the server generates this block and rejects an override,
-        // so offering one would be an edit that silently could not be saved.
-        // (The flag predates PC-01, when the block could still be positioned.)
-        positionOnly: true,
-        locked: true,
-    },
-    profile: {
-        label: 'Your profile',
-        description: 'Who you are, from the Profile section — your preferred name and whatever sections you have switched on. Reword the framing here if you like; the content always comes from your Profile page.',
-        conditional: 'Sent only when you have written a profile and the persona is allowed to see it.',
-    },
-    expressions: {
-        label: 'Expression protocol',
-        description: 'How to emit [expression: name] tags.',
-        conditional: 'Sent only when the persona has expressions and aux-model expressions are off.',
-    },
-    scratchpad: {
-        label: 'Scratchpad',
-        description: 'How to use the shared scratchpad beside the chat.',
-        conditional: 'Sent only when the scratchpad is active for the chat.',
     },
     persona: {
         label: 'Persona prompt',
-        description: "The persona's own prompt. Position only — its text is edited on the persona.",
+        description: "The active persona's prompt, auto-wrapped in <main_persona> with its name. Position only — edit its text on the persona.",
         positionOnly: true,
+    },
+    capabilities: {
+        label: 'Capabilities',
+        description: 'Protected <capabilities> sub-layer wrapping whichever features are active (Workspace & Project, File Tools, Scratchpad, Avatar Expressions). Position can move; wording is server-managed for reliable tool use.',
+        positionOnly: true,
+        locked: true,
+        lockedLabel: 'Protected',
+        lockedTitle: 'Server-managed sub-layer — emitted automatically when any capability is active, and cannot be edited or turned off',
+    },
+    profile: {
+        label: 'Your profile',
+        description: 'Who you are (<user_profile>), placed at the start of the Message layer by default. Reword the framing here; content comes from your Profile page.',
+        conditional: 'Sent only when you have written a profile and the persona is allowed to see it.',
     },
     context_ack: {
         label: 'Context acknowledgement',
-        description: "The assistant's one-line reply after workspace or project files are injected.",
-        conditional: 'Sent only when the chat inherits knowledge files.',
+        description: "Voice-neutral synthetic assistant reply after leading context (Your profile and/or Workspace/Project KB).",
+        conditional: 'Sent only when leading context is injected.',
+    },
+    state: {
+        label: 'Current context',
+        description: 'Live <current_context> (<session_state>, active files, scratchpad) prepended right before your latest message. Omitted on bare chats.',
+        positionOnly: true,
+        locked: true,
+        lockedLabel: 'Auto',
+        lockedTitle: 'Generated from live session state and omitted on bare chats — cannot be edited or turned off',
     },
 };
 
@@ -479,8 +476,9 @@ export function renderPresetEditor() {
     if (!elements.presetEditor || !preset || !blocks) return;
 
     const systemIds = presetDefaults.systemBlockIds;
-    const order = blocks.order.filter(id => systemIds.includes(id));
-    const messageIds = presetDefaults.messageBlockIds;
+    const crossLayerIds = presetDefaults.crossLayerBlockIds || [];
+    const order = blocks.order.filter(id => systemIds.includes(id) || (crossLayerIds.includes(id) && blocks.blocks[id]?.layer === 'system'));
+    const messageIds = presetDefaults.messageBlockIds.filter(id => !order.includes(id));
 
     elements.presetEditor.innerHTML = `
         <div class="preset-editor-head">
@@ -529,11 +527,11 @@ export function renderPresetEditor() {
     });
     wireEditorEvents();
     setupTextareaResizers(); // each block card renders a fresh handle
-    syncExpressionWarning();
 }
 
 /** One block card. `text: null` renders empty, with the built-in as placeholder. */
 function blockCardHTML(id, block, { index = 0, count = 1, draggable }) {
+    block = block || { enabled: true, text: null };
     const info = BLOCK_INFO[id] || { label: id, description: '' };
     const overridden = typeof block.text === 'string' && block.text !== '';
     const builtIn = presetDefaults.blocks[id] || '';
@@ -554,7 +552,7 @@ function blockCardHTML(id, block, { index = 0, count = 1, draggable }) {
                 <input type="checkbox" data-action="toggle"${block.enabled === false ? '' : ' checked'}>
                 <span>On</span>
             </label>`}
-            ${info.locked ? '<span class="preset-block-locked" title="Always sent, and generated from live state — it cannot be edited or turned off">Always on</span>' : ''}
+            ${info.locked ? `<span class="preset-block-locked" title="${escapeHtml(info.lockedTitle || 'Managed by the server — cannot be edited or turned off')}">${escapeHtml(info.lockedLabel || 'Protected')}</span>` : ''}
         </div>
         <p class="preset-block-desc">
             ${escapeHtml(info.description)}
@@ -588,7 +586,6 @@ function wireEditorEvents() {
                 // an override that happens to be empty.
                 blocks.blocks[id].text = textarea.value === '' ? null : textarea.value;
                 refreshBlockChrome(card, id);
-                if (id === 'expressions') syncExpressionWarning();
                 queuePresetSave();
             });
         }
@@ -616,7 +613,6 @@ function wireEditorEvents() {
             blocks.blocks[id].text = null;
             if (textarea) textarea.value = '';
             refreshBlockChrome(card, id);
-            if (id === 'expressions') syncExpressionWarning();
             queuePresetSave();
         });
 
@@ -637,24 +633,6 @@ function refreshBlockChrome(card, id) {
     if (pill) pill.textContent = block.enabled === false ? 'Off' : (overridden ? 'Edited' : 'Built-in');
     const reset = card.querySelector('[data-action="reset"]');
     if (reset) reset.disabled = !overridden;
-}
-
-/**
- * Warn when a custom expression block drops `{{expressions}}` (Decision D5).
- * Deliberately a warning and not a block: removing the protocol is a legitimate
- * thing to want, and the app has no business refusing it — but doing it by
- * accident means the model is never told which expressions exist.
- */
-function syncExpressionWarning() {
-    const card = elements.presetEditor.querySelector('.preset-block[data-block-id="expressions"]');
-    if (!card) return;
-    const warn = card.querySelector('[data-warn]');
-    const block = editingBlocks().blocks.expressions;
-    const missing = typeof block.text === 'string' && block.text !== '' && !block.text.includes('{{expressions}}');
-    warn.hidden = !missing;
-    warn.textContent = missing
-        ? 'No {{expressions}} in this block — the model won’t be told which expressions the persona has, so its tags will be guesses.'
-        : '';
 }
 
 /** Move a block within the system-layer order and re-render. */
@@ -969,14 +947,13 @@ export function setPersonaPresetBase(value) {
  */
 const EXCLUSION_REASONS = {
     disabled: 'turned off in this preset',
-    'no-expressions': 'the persona has no expressions',
-    'aux-expressions': 'picked by your aux model after each reply',
-    'scratchpad-inactive': 'the scratchpad is off for this chat',
+    'no-capabilities': 'no workspace, tools, scratchpad, or inline expressions are active',
     'no-persona-prompt': 'the persona has no prompt text',
     'no-profile': 'you have not written a profile yet',
     'profile-off': 'this persona is set not to see your profile',
+    'bare-chat': 'omitted on bare chats (no workspace, tools, scratchpad, or chat files)',
     'no-session-state': 'no session state was resolved for this request',
-    'no-context': 'this chat has no workspace or project files',
+    'no-context': 'this chat has no leading profile or workspace context',
     empty: 'the text is empty',
 };
 
@@ -984,6 +961,7 @@ const SOURCE_LABELS = {
     'built-in': 'Built-in',
     preset: 'Preset',
     persona: 'Persona',
+    generated: 'Generated',
 };
 
 /**
@@ -1026,11 +1004,12 @@ export async function renderPromptInspector(host, { presetId } = {}) {
         result = await API.chat.preview({
             provider: cfg.provider,
             model: cfg.model,
-            // One representative user turn: the assembly appends per-turn blocks
+            // One representative user turn: the assembly prepends per-turn blocks
             // to the LAST user message, so an empty thread would under-report.
             messages: [{ role: 'user', content: '…' }],
             // Assembled, exactly as the send path builds it (PS-01).
             systemPrompt: getActivePersona() ? assemblePersonaPrompt(getActivePersona()) : '',
+            personaName: getActivePersona()?.name || '',
             expressionNames: Object.keys(getActivePersona()?.expressions || {}),
             conversationId: state.activeConversationId || undefined,
             ...(presetId ? { presetId } : {}),
@@ -1045,12 +1024,12 @@ export async function renderPromptInspector(host, { presetId } = {}) {
     const messageIds = presetDefaults.messageBlockIds;
     const included = blocks.filter(b => b.included);
     const excluded = blocks.filter(b => !b.included);
-    // Split by layer. The header counts the SYSTEM prompt only: since PC-01 the
-    // session-state block travels with the user's message instead, and folding
-    // it into this total would report a system prompt longer than the one
-    // actually sent — exactly the drift the inspector exists to prevent.
-    const systemBlocks = included.filter(b => !messageIds.includes(b.id));
-    const messageBlocks = included.filter(b => messageIds.includes(b.id));
+    // Split by layer. Use each block's reported `layer` (supporting cross-layer
+    // blocks like `profile` that a preset can move to System), falling back to
+    // messageIds for older payloads.
+    const isMessageBlock = (b) => b.layer === 'message' || (!b.layer && messageIds.includes(b.id));
+    const systemBlocks = included.filter(b => !isMessageBlock(b));
+    const messageBlocks = included.filter(isMessageBlock);
     const total = systemBlocks.reduce((n, b) => n + b.chars, 0);
 
     const blockHTML = (b) => `

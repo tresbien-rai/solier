@@ -13,6 +13,7 @@
 
 const { getDb, closeDb } = require('../db/connection');
 const dal = require('../db/dal');
+const config = require('../config');
 const { resolveRequestContext, assembleProviderInput } = require('./chat');
 
 let failures = 0;
@@ -64,12 +65,15 @@ const reqFor = (userId, body) => ({ user: { userId }, body });
     check('has <workspace_context> wrapper', pCtx.text.includes('<workspace_context>'));
     check('has <project_context> wrapper', pCtx.text.includes('<project_context>'));
 
-    // FC-03a: the KB no longer rides in the system prompt — it becomes a
+    // FC-03a / DF-02: the KB no longer rides in the system prompt — it becomes a
     // synthetic user turn + an assistant ack prepended to the messages. `system`
-    // is the Tessera base layer followed by the persona prompt, and crucially
-    // still carries no knowledge-base text.
+    // is the XML-delimited operating environment followed by the wrapped persona
+    // prompt, and crucially still carries no knowledge-base text.
     const assembled = assembleProviderInput(pCtx, 'PERSONA_PROMPT', [{ role: 'user', content: 'HELLO_TURN' }]);
-    check('system = Solier base layer + persona prompt', assembled.system.startsWith('# Solier') && assembled.system.endsWith('PERSONA_PROMPT'));
+    check('system = brand base layer + persona prompt',
+      assembled.system.startsWith(`<operating_environment>\n# ${config.brand}`)
+      && assembled.system.includes('PERSONA_PROMPT')
+      && assembled.system.endsWith('</main_persona>'));
     check('KB text is not in system', !assembled.system.includes('<project_context>') && !assembled.system.includes('<workspace_context>'));
     check('KB is the leading synthetic user turn',
       assembled.messages[0].role === 'user'
@@ -91,7 +95,8 @@ const reqFor = (userId, body) => ({ user: { userId }, body });
     check('no context block', uCtx === null);
     const uAssembled = assembleProviderInput(uCtx, 'PERSONA_PROMPT', [{ role: 'user', content: 'X' }]);
     check('no context → messages passed through unchanged', uAssembled.messages.length === 1 && uAssembled.messages[0].content === 'X');
-    check('no context → system still ends with the persona prompt', uAssembled.system.endsWith('PERSONA_PROMPT'));
+    check('no context → system still ends with the persona prompt',
+      uAssembled.system.includes('PERSONA_PROMPT') && uAssembled.system.endsWith('</main_persona>'));
 
     // --- New (unsaved) chat via explicit ids; project derives its workspace --
     console.log('\n4. Explicit projectId derives its workspace...');

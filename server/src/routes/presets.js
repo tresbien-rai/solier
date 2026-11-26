@@ -32,6 +32,7 @@ const {
   MAX_PRESET_CHARS,
   SYSTEM_BLOCK_IDS,
   MESSAGE_BLOCK_IDS,
+  CROSS_LAYER_BLOCK_IDS,
   MACRO_REFERENCE,
 } = require('../prompts/presets');
 const { BUILTIN_BLOCK_TEXT } = require('../prompts/tessera');
@@ -61,6 +62,7 @@ router.get('/defaults', asyncHandler(async (req, res) => {
     blocks: BUILTIN_BLOCK_TEXT,
     systemBlockIds: SYSTEM_BLOCK_IDS,
     messageBlockIds: MESSAGE_BLOCK_IDS,
+    crossLayerBlockIds: CROSS_LAYER_BLOCK_IDS,
     defaults: defaultBlocks(),
     macros: MACRO_REFERENCE,
     limits: { blockChars: MAX_BLOCK_CHARS, presetChars: MAX_PRESET_CHARS, presets: MAX_PRESETS },

@@ -13,8 +13,12 @@
  */
 
 const assert = require('node:assert');
-const { renderProfile, resolveUserName } = require('./profile');
-const { composeSystemPrompt, buildSystemPrompt, PROFILE_SECTION } = require('./tessera');
+const { renderProfile, resolveUserName, hasProfileData } = require('./profile');
+const {
+  composeSystemPrompt, buildSystemPrompt,
+  buildProfileMessageBlock, describeProfileMessageBlock,
+  PROFILE_SECTION,
+} = require('./tessera');
 const { normalizeProfile } = require('../utils/userProfile');
 
 let failures = 0;
@@ -29,8 +33,13 @@ function check(label, fn) {
   }
 }
 
-/** The block entry for `profile` out of a compose() call. */
-function profileBlock(options) {
+/** The block entry for `profile` in its default Message layer. */
+function msgProfileBlock(options) {
+  return describeProfileMessageBlock(options);
+}
+
+/** The block entry for `profile` when a preset moves it into the System layer. */
+function sysProfileBlock(options) {
   return composeSystemPrompt('PERSONA', [], options).blocks.find((b) => b.id === 'profile');
 }
 
@@ -68,8 +77,9 @@ check('enabled sections render with their titles, in the user order', () => {
   assert.ok(out.indexOf('About me') < out.indexOf('Work'), 'order is the user\'s');
 });
 
-check('the preferred name is stated', () => {
-  assert.ok(renderProfile(FULL).includes('Jack'));
+check('renderProfile does not duplicate preferredName (it lives in # User: {{user}})', () => {
+  const out = renderProfile(FULL);
+  assert.ok(!out.includes('They go by'), 'redundant intro line removed in DF-02');
 });
 
 check('a titled section with no body still renders — naming a topic is information', () => {
@@ -82,9 +92,18 @@ check('a section with neither title nor body is dropped', () => {
   assert.strictEqual(renderProfile(p), '');
 });
 
-check('a name-only profile still renders', () => {
+check('a name-only profile hasProfileData=true and renders cleanly in <user_profile>', () => {
   const p = normalizeProfile({ preferredName: 'Jack', sections: [] });
-  assert.ok(renderProfile(p).includes('Jack'));
+  assert.strictEqual(hasProfileData(p), true);
+  assert.strictEqual(hasProfileData(normalizeProfile(null)), false);
+  const block = msgProfileBlock({
+    profileEnabled: true,
+    hasProfile: hasProfileData(p),
+    macros: { userName: resolveUserName(p, ''), profileText: renderProfile(p) },
+  });
+  assert.strictEqual(block.included, true);
+  assert.ok(block.text.includes('# User: Jack'), 'preferred name shown in header');
+  assert.ok(!block.text.includes('\n\n</user_profile>'), 'no trailing blank lines before closer');
 });
 
 console.log('\n2. resolveUserName...');
@@ -101,29 +120,40 @@ check('no profile and no account name is empty, never undefined', () => {
   assert.strictEqual(resolveUserName(null, undefined), '');
 });
 
-console.log('\n3. gating in the system prompt...');
+console.log('\n3. gating (Message layer by default, movable to System by preset)...');
 
-check('included when enabled and non-empty', () => {
-  const block = profileBlock({ profileEnabled: true, macros: { profileText: renderProfile(FULL) } });
+check('included in Message layer by default when enabled and non-empty', () => {
+  const opts = {
+    profileEnabled: true,
+    hasProfile: hasProfileData(FULL),
+    macros: { userName: resolveUserName(FULL, ''), profileText: renderProfile(FULL) },
+  };
+  const block = msgProfileBlock(opts);
   assert.strictEqual(block.included, true);
+  assert.strictEqual(block.layer, 'message');
+  assert.ok(block.text.startsWith('<user_profile>\n# User: Jack'), 'XML + user header');
   assert.ok(block.text.includes('About me'));
-  assert.ok(block.text.includes('The person you are talking to'), 'framing present');
+  assert.ok(block.text.includes('background context you already know'), 'framing present');
+  assert.strictEqual(sysProfileBlock(opts), undefined, 'not in system prompt by default');
 });
 
 check('persona opted out => profile-off, and NOTHING of the profile is emitted', () => {
-  const text = buildSystemPrompt('PERSONA', [], {
+  const opts = {
     profileEnabled: false,
-    macros: { profileText: renderProfile(FULL) },
-  });
-  assert.ok(!text.includes('Jack'), 'name leaked past an opted-out persona');
-  assert.ok(!text.includes('About me'), 'section leaked past an opted-out persona');
-  const block = profileBlock({ profileEnabled: false, macros: { profileText: renderProfile(FULL) } });
+    hasProfile: hasProfileData(FULL),
+    macros: { userName: 'Jack', profileText: renderProfile(FULL) },
+  };
+  const msgText = buildProfileMessageBlock(opts);
+  const sysText = buildSystemPrompt('PERSONA', [], opts);
+  assert.strictEqual(msgText, '', 'message block empty');
+  assert.ok(!sysText.includes('Jack') && !sysText.includes('About me'), 'nothing leaked to system');
+  const block = msgProfileBlock(opts);
   assert.strictEqual(block.included, false);
   assert.strictEqual(block.reason, 'profile-off');
 });
 
 check('enabled but empty => no-profile, a DIFFERENT reason', () => {
-  const block = profileBlock({ profileEnabled: true, macros: { profileText: '' } });
+  const block = msgProfileBlock({ profileEnabled: true, hasProfile: false, macros: { profileText: '' } });
   assert.strictEqual(block.included, false);
   assert.strictEqual(block.reason, 'no-profile');
 });
@@ -131,58 +161,78 @@ check('enabled but empty => no-profile, a DIFFERENT reason', () => {
 check('the two silences stay distinguishable', () => {
   // They are the two answers to "why is my profile not in the prompt". Collapse
   // them into one code and the inspector can only shrug.
-  const off = profileBlock({ profileEnabled: false, macros: { profileText: renderProfile(FULL) } });
-  const none = profileBlock({ profileEnabled: true, macros: { profileText: '' } });
+  const off = msgProfileBlock({ profileEnabled: false, macros: { profileText: renderProfile(FULL) } });
+  const none = msgProfileBlock({ profileEnabled: true, hasProfile: false, macros: { profileText: '' } });
   assert.notStrictEqual(off.reason, none.reason);
 });
 
 check('a preset may disable the block outright', () => {
-  const preset = { order: ['orientation', 'profile', 'persona'], blocks: { profile: { enabled: false, text: null } } };
-  const block = profileBlock({ profileEnabled: true, preset, macros: { profileText: renderProfile(FULL) } });
+  const preset = { blocks: { profile: { enabled: false, text: null } } };
+  const block = msgProfileBlock({ profileEnabled: true, preset, macros: { profileText: renderProfile(FULL) } });
   assert.strictEqual(block.included, false);
   assert.strictEqual(block.reason, 'disabled');
 });
 
 check('a preset may reword the framing but not the content', () => {
   const preset = {
-    order: ['orientation', 'profile', 'persona'],
     blocks: { profile: { enabled: true, text: 'WHO:\n{{profile}}' } },
   };
-  const block = profileBlock({ profileEnabled: true, preset, macros: { profileText: renderProfile(FULL) } });
+  const block = msgProfileBlock({ profileEnabled: true, preset, macros: { profileText: renderProfile(FULL) } });
   assert.strictEqual(block.source, 'preset');
   assert.ok(block.text.startsWith('WHO:'), 'framing reworded');
   assert.ok(block.text.includes('### About me'), 'content unchanged');
   assert.ok(!block.text.includes('Secret'), 'a preset cannot resurrect a disabled section');
 });
 
+check('a preset may move profile into the System layer', () => {
+  const preset = {
+    order: ['orientation', 'profile', 'persona', 'capabilities'],
+    blocks: { profile: { enabled: true, text: null, layer: 'system' } },
+  };
+  const opts = {
+    profileEnabled: true,
+    hasProfile: true,
+    preset,
+    macros: { userName: 'Jack', profileText: renderProfile(FULL) },
+  };
+  const sys = sysProfileBlock(opts);
+  assert.strictEqual(sys.included, true);
+  assert.strictEqual(sys.layer, 'system');
+  assert.ok(sys.text.includes('# User: Jack'));
+  assert.strictEqual(msgProfileBlock(opts), null, 'not duplicated in Message layer');
+  assert.strictEqual(buildProfileMessageBlock(opts), '');
+});
+
 console.log('\n4. position + caching...');
 
-check('built-in position is directly after the orientation', () => {
-  const ids = composeSystemPrompt('PERSONA', [], {
+check('built-in System order puts orientation then persona (profile lives in Message)', () => {
+  const ids = composeSystemPrompt('PERSONA', ['happy'], {
     profileEnabled: true,
-    macros: { profileText: renderProfile(FULL) },
+    macros: { userName: 'Jack', profileText: renderProfile(FULL) },
   }).blocks.filter((b) => b.included).map((b) => b.id);
-  assert.deepStrictEqual(ids.slice(0, 2), ['orientation', 'profile']);
+  assert.deepStrictEqual(ids, ['orientation', 'persona', 'capabilities']);
 });
 
 check('the profile block is byte-identical across differing session state', () => {
-  // It lives in the SYSTEM prompt, so any per-turn variation in it would
-  // re-write the cached prefix on every message (docs/design/PROMPT_CACHING_DESIGN.md).
+  // Whether in Message or System, it lives in the cached prefix, so any per-turn
+  // variation in it would rewrite the cached prefix (PROMPT_CACHING_DESIGN.md).
   const opts = (sessionState) => ({
     profileEnabled: true,
+    hasProfile: true,
     sessionState,
-    macros: { profileText: renderProfile(FULL) },
+    macros: { userName: 'Jack', profileText: renderProfile(FULL) },
   });
-  const a = buildSystemPrompt('PERSONA', [], opts('<session_state>files: 0</session_state>'));
-  const b = buildSystemPrompt('PERSONA', [], opts('<session_state>files: 12</session_state>'));
+  const a = buildProfileMessageBlock(opts('<session_state>files: 0</session_state>'));
+  const b = buildProfileMessageBlock(opts('<session_state>files: 12</session_state>'));
   assert.strictEqual(a, b);
 });
 
-check('the built-in framing tells the model not to recite it', () => {
+check('the built-in framing tells the model not to recite it (and omits "trust the conversation")', () => {
   // The behaviour this guards is real: given a block of facts about someone,
   // models tend to perform having read it. If this wording is ever dropped,
   // this test should fail loudly rather than the app quietly getting weird.
-  assert.ok(/do not recite/i.test(PROFILE_SECTION));
+  assert.ok(/not recited back/i.test(PROFILE_SECTION));
+  assert.ok(!/trust the conversation/i.test(PROFILE_SECTION), 'intentionally omitted for persona memory (DF-02)');
 });
 
 console.log('\n' + '='.repeat(60));
