@@ -84,6 +84,7 @@ function defaultBlocks() {
       enabled: true,
       text: null,
       ...(CROSS_LAYER_BLOCK_IDS.includes(id) ? { layer: 'message' } : {}),
+      ...(id === 'state' ? { position: 'before' } : {}),
     };
   }
   return { version: BLOCKS_VERSION, order: [...SYSTEM_BLOCK_IDS], blocks };
@@ -143,6 +144,9 @@ function normalizeBlocks(raw) {
         out.order = out.order.filter((x) => x !== id);
       }
     }
+    if (id === 'state') {
+      entry.position = b.position === 'after' ? 'after' : 'before';
+    }
     out.blocks[id] = entry;
   }
   return out;
@@ -189,6 +193,11 @@ function validateBlocks(raw) {
       if (b.layer !== undefined) {
         if (!CROSS_LAYER_BLOCK_IDS.includes(id) || (b.layer !== 'system' && b.layer !== 'message')) {
           return { ok: false, error: `Block "${id}": invalid layer "${String(b.layer)}".` };
+        }
+      }
+      if (b.position !== undefined) {
+        if (id !== 'state' || (b.position !== 'before' && b.position !== 'after')) {
+          return { ok: false, error: `Block "${id}": invalid position "${String(b.position)}".` };
         }
       }
       if (id === 'state') {

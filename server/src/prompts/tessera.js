@@ -139,6 +139,38 @@ const BUILTIN_BLOCK_TEXT = {
   context_ack: CONTEXT_ACK,
 };
 
+/**
+ * Metadata + server-owned wording for each sub-section inside `<capabilities>`.
+ * Exposed via GET /api/presets/defaults so the Preset Editor can show users
+ * exactly what the protected sub-layer contains without duplicating strings.
+ */
+const CAPABILITY_SECTIONS = [
+  {
+    id: 'workspace',
+    title: 'Workspace & Project',
+    condition: 'Active when this chat belongs to a Workspace or Project',
+    text: CAPABILITY_WORKSPACE,
+  },
+  {
+    id: 'file_tools',
+    title: 'File Tools',
+    condition: 'Active when File Tools are turned on for this chat',
+    text: CAPABILITY_FILE_TOOLS,
+  },
+  {
+    id: 'scratchpad',
+    title: 'Scratchpad',
+    condition: 'Active when the Scratchpad is enabled for this chat',
+    text: SCRATCHPAD_SECTION,
+  },
+  {
+    id: 'expressions',
+    title: 'Avatar Expressions',
+    condition: 'Active when the persona has expressions and Aux Expressions is off',
+    text: EXPRESSION_SECTION,
+  },
+];
+
 /** The text a block renders with: the preset's override, or the built-in. */
 function blockText(preset, id) {
   const override = preset.blocks[id] && preset.blocks[id].text;
@@ -403,6 +435,12 @@ function sessionStateBlock(options = {}) {
   return typeof options.sessionState === 'string' ? options.sessionState.trim() : '';
 }
 
+/** Whether `<current_context>` is placed `'before'` (default) or `'after'` the latest user message (DF-03). */
+function resolveStatePosition(options = {}) {
+  const preset = normalizeBlocks(options.preset);
+  return preset.blocks.state?.position === 'after' ? 'after' : 'before';
+}
+
 /**
  * The session-state block's provenance entry (AP-05), in the same shape
  * composeSystemPrompt produces. Mirrors describeContextAck: a message-layer
@@ -416,17 +454,19 @@ function sessionStateBlock(options = {}) {
  */
 function describeSessionState(options = {}) {
   const id = 'state';
+  const position = resolveStatePosition(options);
   const text = sessionStateBlock(options);
   if (!text) {
     return {
       id,
       layer: 'message',
+      position,
       included: false,
       reason: options.bareChat ? 'bare-chat' : 'no-session-state',
       chars: 0,
     };
   }
-  return { id, layer: 'message', included: true, source: 'generated', chars: text.length, text };
+  return { id, layer: 'message', position, included: true, source: 'generated', chars: text.length, text };
 }
 
 module.exports = {
@@ -439,11 +479,13 @@ module.exports = {
   buildContextAck,
   describeContextAck,
   sessionStateBlock,
+  resolveStatePosition,
   describeSessionState,
   sanitizeExpressionNames,
   ORIENTATION,
   CAPABILITY_WORKSPACE,
   CAPABILITY_FILE_TOOLS,
+  CAPABILITY_SECTIONS,
   EXPRESSION_SECTION,
   PROFILE_SECTION,
   SCRATCHPAD_SECTION,

@@ -30,7 +30,6 @@ import { showToast } from '../components/toast.js';
 import { displayError } from '../components/errors.js';
 import { confirmDialog, promptName } from '../components/dialogs.js';
 import { positionPopover, attachPopoverOutsideClose } from '../components/menus.js';
-import { setupTextareaResizers } from '../components/textarea-resize.js';
 import { assemblePersonaPrompt } from '../persona-sections.js';
 // AP-04 only: the composer pill's menu can jump to this view, and the persona
 // editor's picker writes through the persona save path like every other field.
@@ -209,14 +208,20 @@ export function renderPresetList() {
     host.innerHTML = rows.join('');
 }
 
-/** "2 blocks edited · reordered", or "no changes yet" — what this preset does. */
+/** "2 blocks edited · 1 off", or "No changes from the built-in yet". */
 function describeOverrides(preset) {
     const blocks = (preset.blocks && preset.blocks.blocks) || {};
-    const edited = Object.values(blocks).filter(b => typeof b.text === 'string' && b.text !== '').length;
+    const order = (preset.blocks && preset.blocks.order) || [];
+    const edited = Object.values(blocks).filter(b => typeof b.text === 'string').length;
     const disabled = Object.values(blocks).filter(b => b.enabled === false).length;
+    const defaultOrder = presetDefaults?.systemBlockIds || ['orientation', 'persona', 'capabilities'];
+    const reordered = blocks.profile?.layer === 'system'
+        || blocks.state?.position === 'after'
+        || (order.length > 0 && order.join(',') !== defaultOrder.join(','));
     const bits = [];
     if (edited) bits.push(`${edited} block${edited === 1 ? '' : 's'} edited`);
     if (disabled) bits.push(`${disabled} off`);
+    if (reordered) bits.push('reordered');
     return bits.length ? escapeHtml(bits.join(' · ')) : 'No changes from the built-in yet';
 }
 
@@ -410,11 +415,46 @@ const BLOCK_INFO = {
     },
     state: {
         label: 'Current context',
-        description: 'Live <current_context> (<session_state>, active files, scratchpad) prepended right before your latest message. Omitted on bare chats.',
+        description: 'Live <current_context> (<session_state>, active files, scratchpad) injected alongside your latest message. Omitted on bare chats.',
         positionOnly: true,
         locked: true,
         lockedLabel: 'Auto',
         lockedTitle: 'Generated from live session state and omitted on bare chats — cannot be edited or turned off',
+    },
+};
+
+// Static informational cards that sit alongside preset blocks in the Message
+// Layer so the editor reflects the COMPLETE assembled prompt picture (DF-03).
+const INFO_CARDS = {
+    workspace_kb: {
+        id: 'workspace_kb',
+        label: 'Workspace & Project KB',
+        roleTag: 'User',
+        roleClass: 'role-user',
+        cacheTag: 'Cached',
+        cacheClass: 'cache-cached',
+        description: 'Active Workspace and Project instructions plus reference files. Injected in the leading context turn right alongside Your profile so they stay 100% inside the cached prefix.',
+        note: 'Managed on each Workspace and Project page; omitted on unfiled chats.',
+    },
+    history: {
+        id: 'history',
+        label: 'Conversation history',
+        roleTag: 'Multi-turn',
+        roleClass: 'role-history',
+        cacheTag: 'Cached',
+        cacheClass: 'cache-cached',
+        description: 'Prior user and assistant turns sent as native API messages (never flattened into XML) for multi-turn fidelity and incremental prompt caching.',
+        note: 'Earlier assistant replies may include a one-line <tool_trail> when tools ran.',
+    },
+    latest_user: {
+        id: 'latest_user',
+        label: 'Latest user message',
+        roleTag: 'User',
+        roleClass: 'role-user',
+        cacheTag: 'Volatile',
+        cacheClass: 'cache-volatile',
+        description: 'Your current message (plus any image, PDF, or file attachments for this turn). Sits below the cache boundary so earlier turns stay cached.',
+        note: 'Use the Before / After toggle on Current context to choose whether <current_context> is prepended ahead of your message or appended after it.',
     },
 };
 
@@ -424,6 +464,9 @@ let presetDefaults = null;
 
 let editingPresetId = null;
 let saveTimer = null;
+// Tracks which block cards are expanded while editing the active preset so
+// reordering, moving layers, or toggling Before/After never collapses open cards.
+const expandedBlockIds = new Set();
 
 /** The preset being edited, or null. */
 function editingPreset() {
@@ -433,6 +476,7 @@ function editingPreset() {
 /** Open the editor for a preset, fetching the built-in text if we lack it. */
 export async function openPresetEditor(presetId) {
     if (!state.presets[presetId]) return;
+    if (editingPresetId !== presetId) expandedBlockIds.clear();
     editingPresetId = presetId;
     showEditorPanel(true);
     elements.presetEditor.innerHTML = '<p class="section-note">Loading…</p>';
@@ -455,6 +499,7 @@ export async function openPresetEditor(presetId) {
 export function closePresetEditor() {
     flushPresetSave();
     editingPresetId = null;
+    expandedBlockIds.clear();
     showEditorPanel(false);
     renderPresetList();
 }
@@ -470,6 +515,21 @@ function editingBlocks() {
     return preset && preset.blocks ? preset.blocks : null;
 }
 
+/** Normalized built-in text for an editable block (LF line endings). */
+function builtInText(id) {
+    return String(presetDefaults?.blocks?.[id] || '').replace(/\r\n/g, '\n');
+}
+
+/** Effective text shown inside an editable textarea (override or built-in). */
+function effectiveBlockText(id, block) {
+    return typeof block?.text === 'string' ? block.text : builtInText(id);
+}
+
+/** Whether an editable block carries a custom override distinct from built-in. */
+function isBlockOverridden(id, block) {
+    return typeof block?.text === 'string' && block.text !== builtInText(id);
+}
+
 export function renderPresetEditor() {
     const preset = editingPreset();
     const blocks = editingBlocks();
@@ -477,26 +537,71 @@ export function renderPresetEditor() {
 
     const systemIds = presetDefaults.systemBlockIds;
     const crossLayerIds = presetDefaults.crossLayerBlockIds || [];
-    const order = blocks.order.filter(id => systemIds.includes(id) || (crossLayerIds.includes(id) && blocks.blocks[id]?.layer === 'system'));
-    const messageIds = presetDefaults.messageBlockIds.filter(id => !order.includes(id));
+    const systemOrder = blocks.order.filter(
+        id => systemIds.includes(id) || (crossLayerIds.includes(id) && blocks.blocks[id]?.layer === 'system')
+    );
+    const profileInMessage = !systemOrder.includes('profile');
+    const statePosition = blocks.blocks.state?.position === 'after' ? 'after' : 'before';
+
+    const volatileCardsHTML = statePosition === 'after'
+        ? infoCardHTML(INFO_CARDS.latest_user) + blockCardHTML('state', blocks.blocks.state, { layer: 'message', draggable: false })
+        : blockCardHTML('state', blocks.blocks.state, { layer: 'message', draggable: false }) + infoCardHTML(INFO_CARDS.latest_user);
 
     elements.presetEditor.innerHTML = `
         <div class="preset-editor-head">
             <button type="button" class="cp-crumb" id="presetEditorBack">‹ Prompt presets</button>
             <span class="preset-editor-head-actions">
                 <span class="preset-save-status" id="presetSaveStatus"></span>
+                <button type="button" class="preset-action" id="presetToggleAllBtn" aria-expanded="false">
+                    <span class="toggle-all-expand">Expand all</span>
+                    <span class="toggle-all-collapse">Collapse all</span>
+                </button>
                 <button type="button" class="preset-action" id="presetExportBtn">Export</button>
             </span>
         </div>
         <h4 class="preset-editor-title">${escapeHtml(preset.name)}</h4>
-        <p class="section-note">Leave a block empty to keep following the built-in text (shown greyed in the box). Drag a block, or use ↑ ↓, to change the order it is sent in.</p>
+        <p class="section-note">Editable blocks start pre-filled with the built-in text and follow future updates until changed. Click any block to inspect or edit it; drag or use ↑ ↓ to reorder.</p>
 
-        <div class="preset-blocks" id="presetBlocks">
-            ${order.map((id, i) => blockCardHTML(id, blocks.blocks[id], { index: i, count: order.length, draggable: true })).join('')}
-        </div>
+        <section class="preset-layer" aria-labelledby="presetLayerSystemHeading">
+            <div class="preset-layer-head">
+                <span class="preset-layer-title" id="presetLayerSystemHeading">System Layer</span>
+                <span class="preset-layer-hint">Cached prefix sent ahead of messages · drag to reorder</span>
+            </div>
+            <div class="preset-blocks" id="presetSystemBlocks" data-drop-layer="system">
+                ${systemOrder.map((id, i) => blockCardHTML(id, blocks.blocks[id], {
+                    layer: 'system',
+                    index: i,
+                    count: systemOrder.length,
+                    draggable: true,
+                    crossLayer: crossLayerIds.includes(id),
+                })).join('')}
+            </div>
+        </section>
 
-        <p class="preset-group-label">Not part of the system prompt</p>
-        ${messageIds.map(id => blockCardHTML(id, blocks.blocks[id], { draggable: false })).join('')}
+        <section class="preset-layer" aria-labelledby="presetLayerMessageHeading">
+            <div class="preset-layer-head">
+                <span class="preset-layer-title" id="presetLayerMessageHeading">Message Layer</span>
+                <span class="preset-layer-hint">Leading cached context, native chat turns, and volatile per-turn tail</span>
+            </div>
+            <div class="preset-blocks" id="presetMessageCachedBlocks" data-drop-layer="message">
+                ${profileInMessage ? blockCardHTML('profile', blocks.blocks.profile, {
+                    layer: 'message',
+                    draggable: true,
+                    crossLayer: true,
+                }) : ''}
+                ${infoCardHTML(INFO_CARDS.workspace_kb)}
+                ${blockCardHTML('context_ack', blocks.blocks.context_ack, { layer: 'message', draggable: false })}
+                ${infoCardHTML(INFO_CARDS.history)}
+            </div>
+
+            <div class="preset-cache-divider" role="separator">
+                <span>Cache boundary · volatile per-turn tail below</span>
+            </div>
+
+            <div class="preset-blocks" id="presetMessageVolatileBlocks">
+                ${volatileCardsHTML}
+            </div>
+        </section>
 
         <div class="preset-editor-preview">
             <button type="button" class="preset-action" id="presetPreviewBtn">Preview this preset</button>
@@ -526,76 +631,245 @@ export function renderPresetEditor() {
         renderPromptInspector(document.getElementById('presetInspector'), { presetId: editingPresetId });
     });
     wireEditorEvents();
-    setupTextareaResizers(); // each block card renders a fresh handle
+    syncToggleAllButton();
 }
 
-/** One block card. `text: null` renders empty, with the built-in as placeholder. */
-function blockCardHTML(id, block, { index = 0, count = 1, draggable }) {
+/** Role + cache metadata badges for each preset block id. */
+function blockMetaTags(id, layer) {
+    if (layer === 'system') {
+        return { role: 'System', roleClass: 'role-system', cache: 'Cached', cacheClass: 'cache-cached' };
+    }
+    if (id === 'context_ack') {
+        return { role: 'Assistant', roleClass: 'role-assistant', cache: 'Cached', cacheClass: 'cache-cached' };
+    }
+    if (id === 'state') {
+        return { role: 'User', roleClass: 'role-user', cache: 'Volatile', cacheClass: 'cache-volatile' };
+    }
+    return { role: 'User', roleClass: 'role-user', cache: 'Cached', cacheClass: 'cache-cached' };
+}
+
+/** One preset block card (accessible custom disclosure + sibling action bar). */
+function blockCardHTML(id, block, { layer = 'system', index = 0, count = 1, draggable = false, crossLayer = false } = {}) {
     block = block || { enabled: true, text: null };
     const info = BLOCK_INFO[id] || { label: id, description: '' };
-    const overridden = typeof block.text === 'string' && block.text !== '';
-    const builtIn = presetDefaults.blocks[id] || '';
+    const editable = !info.positionOnly;
+    const overridden = editable && isBlockOverridden(id, block);
+    const currentText = editable ? effectiveBlockText(id, block) : '';
     const stateLabel = block.enabled === false ? 'Off' : (overridden ? 'Edited' : 'Built-in');
+    const stateClass = block.enabled === false ? 'state-off' : (overridden ? 'state-edited' : 'state-builtin');
+    const tags = blockMetaTags(id, layer);
+    const isOpen = expandedBlockIds.has(id);
+    const bodyId = `presetBlockBody_${id}`;
+    const statePosition = block.position === 'after' ? 'after' : 'before';
+
+    const bodyContent = editable
+        ? `
+            <div class="preset-block-subbar">
+                <span class="preset-block-sync" data-sync-note>${overridden ? 'Custom override for this preset' : 'Matches built-in text (follows updates)'}</span>
+                <button type="button" class="preset-action preset-action-xs" data-action="reset"${overridden ? '' : ' disabled'}>Reset to built-in</button>
+            </div>
+            <textarea id="presetText_${escapeHtml(id)}" class="preset-block-text" data-block-text rows="6"
+                      maxlength="${presetDefaults.limits.blockChars}"
+                      aria-label="${escapeHtml(info.label)} prompt text">${escapeHtml(currentText)}</textarea>
+            <p class="preset-block-warn" data-warn hidden></p>`
+        : id === 'capabilities'
+            ? capabilitiesSublistHTML()
+            : id === 'persona'
+                ? personaAnchorBodyHTML()
+                : id === 'state'
+                    ? statePositionBodyHTML(statePosition)
+                    : '';
 
     return `
-    <div class="preset-block${block.enabled === false ? ' is-off' : ''}" data-block-id="${escapeHtml(id)}"${draggable ? ' draggable="true"' : ''}>
+    <div class="preset-block${block.enabled === false ? ' is-off' : ''}${isOpen ? ' is-open' : ''}"
+         data-block-id="${escapeHtml(id)}" data-layer="${escapeHtml(layer)}"${draggable ? ' draggable="true"' : ''}>
         <div class="preset-block-head">
-            ${draggable ? '<span class="preset-block-grip" aria-hidden="true">⋮⋮</span>' : ''}
-            <span class="preset-block-title">${escapeHtml(info.label)}</span>
-            <span class="preset-block-state" data-state>${stateLabel}</span>
-            ${draggable ? `
-                <button type="button" class="preset-action" data-action="move-up" aria-label="Move up"${index === 0 ? ' disabled' : ''}>↑</button>
-                <button type="button" class="preset-action" data-action="move-down" aria-label="Move down"${index === count - 1 ? ' disabled' : ''}>↓</button>` : ''}
-            ${info.locked ? '' : `
-            <button type="button" class="preset-action" data-action="reset"${overridden ? '' : ' disabled'}>Reset</button>
-            <label class="preset-block-toggle">
-                <input type="checkbox" data-action="toggle"${block.enabled === false ? '' : ' checked'}>
-                <span>On</span>
-            </label>`}
-            ${info.locked ? `<span class="preset-block-locked" title="${escapeHtml(info.lockedTitle || 'Managed by the server — cannot be edited or turned off')}">${escapeHtml(info.lockedLabel || 'Protected')}</span>` : ''}
-        </div>
-        <p class="preset-block-desc">
-            ${escapeHtml(info.description)}
-            ${info.conditional ? `<em class="preset-block-cond">${escapeHtml(info.conditional)}</em>` : ''}
-        </p>
-        ${info.positionOnly ? '' : `
-            <div class="textarea-resizable">
-                <textarea id="presetText_${escapeHtml(id)}" class="preset-block-text" data-block-text rows="6"
-                          maxlength="${presetDefaults.limits.blockChars}"
-                          placeholder="${escapeHtml(builtIn)}">${escapeHtml(block.text || '')}</textarea>
-                <div class="textarea-resize-handle" aria-hidden="true" title="Drag to resize"></div>
+            ${draggable ? '<span class="preset-block-grip" aria-hidden="true" title="Drag to reorder">⋮⋮</span>' : ''}
+            <button type="button" class="preset-block-trigger" data-action="expand"
+                    aria-expanded="${isOpen ? 'true' : 'false'}" aria-controls="${escapeHtml(bodyId)}">
+                <span class="preset-block-chevron" aria-hidden="true"></span>
+                <span class="preset-block-title">${escapeHtml(info.label)}</span>
+                <span class="preset-pill-tag ${tags.roleClass}">${tags.role}</span>
+                <span class="preset-pill-tag ${tags.cacheClass}">${tags.cache}</span>
+                ${!info.locked ? `<span class="preset-pill-tag ${stateClass}" data-state>${stateLabel}</span>` : ''}
+            </button>
+            <div class="preset-block-actions">
+                ${editable ? `<span class="preset-char-count" data-char-count>${currentText.length.toLocaleString()} ch</span>` : ''}
+                ${crossLayer ? `
+                    <button type="button" class="preset-action preset-action-xs" data-action="toggle-layer"
+                            title="${layer === 'system' ? 'Move to Message Layer (cached prefix)' : 'Move to System Layer'}">
+                        ${layer === 'system' ? '→ Message' : '↑ System'}
+                    </button>` : ''}
+                ${layer === 'system' ? `
+                    <button type="button" class="preset-action preset-action-icon" data-action="move-up" aria-label="Move ${escapeHtml(info.label)} up"${index === 0 ? ' disabled' : ''}>↑</button>
+                    <button type="button" class="preset-action preset-action-icon" data-action="move-down" aria-label="Move ${escapeHtml(info.label)} down"${index === count - 1 ? ' disabled' : ''}>↓</button>` : ''}
+                ${id === 'state' ? `
+                    <div class="segmented preset-pos-seg" role="group" aria-label="Current context placement">
+                        <button type="button" data-action="state-pos" data-position="before" class="${statePosition === 'before' ? 'active' : ''}" aria-pressed="${statePosition === 'before'}">Before</button>
+                        <button type="button" data-action="state-pos" data-position="after" class="${statePosition === 'after' ? 'active' : ''}" aria-pressed="${statePosition === 'after'}">After</button>
+                    </div>` : ''}
+                ${info.locked
+                    ? `<span class="preset-block-locked" title="${escapeHtml(info.lockedTitle || 'Managed by the server — cannot be edited or turned off')}">${escapeHtml(info.lockedLabel || 'Protected')}</span>`
+                    : `<input type="checkbox" role="switch" class="setting-switch preset-block-switch" data-action="toggle"
+                              aria-label="Enable ${escapeHtml(info.label)}"${block.enabled === false ? '' : ' checked'}>`}
             </div>
-            <p class="preset-block-warn" data-warn hidden></p>`}
+        </div>
+        <div class="preset-block-body" id="${escapeHtml(bodyId)}"${isOpen ? '' : ' hidden="until-found"'}>
+            <p class="preset-block-desc">
+                ${escapeHtml(info.description)}
+                ${info.conditional ? `<em class="preset-block-cond">${escapeHtml(info.conditional)}</em>` : ''}
+            </p>
+            ${bodyContent}
+        </div>
     </div>`;
+}
+
+/** Read-only informational data-slot card (Workspace KB, History, Latest message). */
+function infoCardHTML(card) {
+    const isOpen = expandedBlockIds.has(card.id);
+    const bodyId = `presetInfoBody_${card.id}`;
+    return `
+    <div class="preset-block preset-block-info${isOpen ? ' is-open' : ''}" data-info-id="${escapeHtml(card.id)}">
+        <div class="preset-block-head">
+            <button type="button" class="preset-block-trigger" data-action="expand"
+                    aria-expanded="${isOpen ? 'true' : 'false'}" aria-controls="${escapeHtml(bodyId)}">
+                <span class="preset-block-chevron" aria-hidden="true"></span>
+                <span class="preset-block-title">${escapeHtml(card.label)}</span>
+                <span class="preset-pill-tag ${card.roleClass}">${card.roleTag}</span>
+                <span class="preset-pill-tag ${card.cacheClass}">${card.cacheTag}</span>
+            </button>
+            <div class="preset-block-actions">
+                <span class="preset-pill-tag state-data">Data</span>
+            </div>
+        </div>
+        <div class="preset-block-body" id="${escapeHtml(bodyId)}"${isOpen ? '' : ' hidden="until-found"'}>
+            <p class="preset-block-desc">${escapeHtml(card.description)}</p>
+            <p class="preset-block-cond">${escapeHtml(card.note)}</p>
+        </div>
+    </div>`;
+}
+
+/** Read-only list of server-managed sub-sections inside `<capabilities>`. */
+function capabilitiesSublistHTML() {
+    const sections = presetDefaults?.capabilitySections || [];
+    if (!sections.length) return '';
+    return `
+        <div class="preset-cap-list">
+            ${sections.map(s => `
+                <div class="preset-cap-item">
+                    <div class="preset-cap-head">
+                        <span class="preset-cap-title">${escapeHtml(s.title)}</span>
+                        <span class="preset-cap-cond">${escapeHtml(s.condition)}</span>
+                    </div>
+                    <pre class="preset-cap-preview">${escapeHtml(s.text)}</pre>
+                </div>`).join('')}
+        </div>`;
+}
+
+/** Read-only preview note for the auto-wrapped `<main_persona>` slot. */
+function personaAnchorBodyHTML() {
+    const active = getActivePersona();
+    const name = active?.name ? `# Persona: ${active.name}` : '# Persona: {{char}}';
+    return `<pre class="preset-cap-preview">${escapeHtml(`<main_persona>\n${name}\nThis is who you are.\n\n…active persona sections & traits…\n</main_persona>`)}</pre>`;
+}
+
+/** Contextual hint inside the expanded `Current context` (`state`) card. */
+function statePositionBodyHTML(position) {
+    const detail = position === 'after'
+        ? 'Currently appended right after your latest message.'
+        : 'Currently prepended right before your latest message (recommended so your words stay last).';
+    return `<p class="preset-block-cond">${escapeHtml(detail)}</p>`;
+}
+
+/** Open or close a single card and keep aria-expanded + Expand-all synced. */
+function setCardExpanded(card, open) {
+    const key = card.dataset.blockId || card.dataset.infoId;
+    const trigger = card.querySelector('[data-action="expand"]');
+    const body = card.querySelector('.preset-block-body');
+    if (!trigger || !body) return;
+    card.classList.toggle('is-open', open);
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+        body.removeAttribute('hidden');
+        if (key) expandedBlockIds.add(key);
+    } else {
+        body.setAttribute('hidden', 'until-found');
+        if (key) expandedBlockIds.delete(key);
+    }
+    syncToggleAllButton();
+}
+
+/** Mark Expand-all button expanded only when every card in the editor is open. */
+function syncToggleAllButton() {
+    const btn = document.getElementById('presetToggleAllBtn');
+    if (!btn || !elements.presetEditor) return;
+    const cards = [...elements.presetEditor.querySelectorAll('.preset-block')];
+    const allOpen = cards.length > 0 && cards.every(c => c.classList.contains('is-open'));
+    btn.setAttribute('aria-expanded', allOpen ? 'true' : 'false');
 }
 
 /** Wire the editor's controls. Re-run after every re-render. */
 function wireEditorEvents() {
-    const host = document.getElementById('presetBlocks');
+    const systemHost = document.getElementById('presetSystemBlocks');
+    const messageHost = document.getElementById('presetMessageCachedBlocks');
+
+    const toggleAllBtn = document.getElementById('presetToggleAllBtn');
+    if (toggleAllBtn) {
+        toggleAllBtn.addEventListener('click', () => {
+            const expand = toggleAllBtn.getAttribute('aria-expanded') !== 'true';
+            elements.presetEditor.querySelectorAll('.preset-block').forEach(card => {
+                setCardExpanded(card, expand);
+            });
+        });
+    }
 
     elements.presetEditor.querySelectorAll('.preset-block').forEach(card => {
         const id = card.dataset.blockId;
+
+        const expandBtn = card.querySelector('[data-action="expand"]');
+        if (expandBtn) {
+            expandBtn.addEventListener('click', () => {
+                setCardExpanded(card, !card.classList.contains('is-open'));
+            });
+        }
+
+        // Native Find-in-Page reveals hidden="until-found" bodies automatically;
+        // mirror that into aria-expanded, visual state, and expandedBlockIds.
+        const body = card.querySelector('.preset-block-body');
+        if (body) {
+            body.addEventListener('beforematch', () => setCardExpanded(card, true));
+        }
+
+        // Only allow card dragging when the pointer starts on non-interactive
+        // header space (such as the drag grip), never on buttons, switches, or
+        // the expanded body/textarea so text selection and clicks aren't hijacked.
+        if (card.draggable) {
+            card.addEventListener('pointerdown', (e) => {
+                if (e.target.closest('.preset-block-body, button, input, textarea, select')) {
+                    card.draggable = false;
+                }
+            });
+            const restoreDraggable = () => { card.draggable = true; };
+            card.addEventListener('pointerup', restoreDraggable);
+            card.addEventListener('pointercancel', restoreDraggable);
+        }
+
+        if (!id) return; // informational data card — expand/collapse only
 
         const textarea = card.querySelector('[data-block-text]');
         if (textarea) {
             textarea.addEventListener('input', () => {
                 const blocks = editingBlocks();
                 if (!blocks) return;
-                // '' and null mean the same thing to the composer — "use the
-                // built-in" — so an emptied box is stored as null rather than as
-                // an override that happens to be empty.
-                blocks.blocks[id].text = textarea.value === '' ? null : textarea.value;
+                const val = textarea.value;
+                // Matching built-in text verbatim stores null so the block
+                // continues following future built-in updates (Decision D2).
+                blocks.blocks[id].text = val === builtInText(id) ? null : val;
                 refreshBlockChrome(card, id);
                 queuePresetSave();
             });
         }
 
-        // A `locked` card (session state) renders NEITHER of these, so both
-        // lookups return null there. Unguarded, the first one threw inside this
-        // forEach and took the whole wiring pass with it — every card after it
-        // lost its toggle and Reset, and wireBlockDragging at the foot never
-        // ran, so blocks could not be dragged at all. Silent: one console error
-        // on open, and controls that simply did nothing.
         const toggle = card.querySelector('[data-action="toggle"]');
         if (toggle) toggle.addEventListener('change', (e) => {
             const blocks = editingBlocks();
@@ -610,33 +884,82 @@ function wireEditorEvents() {
         if (reset) reset.addEventListener('click', () => {
             const blocks = editingBlocks();
             if (!blocks) return;
+            const builtIn = builtInText(id);
             blocks.blocks[id].text = null;
-            if (textarea) textarea.value = '';
+            if (textarea) textarea.value = builtIn;
             refreshBlockChrome(card, id);
             queuePresetSave();
         });
 
+        const toggleLayerBtn = card.querySelector('[data-action="toggle-layer"]');
+        if (toggleLayerBtn) {
+            toggleLayerBtn.addEventListener('click', () => {
+                const targetLayer = card.dataset.layer === 'system' ? 'message' : 'system';
+                moveBlockLayer(id, targetLayer);
+            });
+        }
+
         const up = card.querySelector('[data-action="move-up"]');
         const down = card.querySelector('[data-action="move-down"]');
-        if (up) up.addEventListener('click', () => moveBlock(id, -1));
-        if (down) down.addEventListener('click', () => moveBlock(id, 1));
+        if (up) up.addEventListener('click', () => moveBlock(id, -1, 'move-up'));
+        if (down) down.addEventListener('click', () => moveBlock(id, 1, 'move-down'));
+
+        card.querySelectorAll('[data-action="state-pos"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const blocks = editingBlocks();
+                if (!blocks) return;
+                const pos = btn.dataset.position === 'after' ? 'after' : 'before';
+                if (blocks.blocks.state.position === pos) return;
+                blocks.blocks.state.position = pos;
+                renderPresetEditor();
+                restoreEditorFocus(`.preset-block[data-block-id="state"] [data-action="state-pos"][data-position="${pos}"]`);
+                queuePresetSave();
+            });
+        });
     });
 
-    if (host) wireBlockDragging(host);
+    if (systemHost) wireBlockDragging(systemHost, messageHost);
 }
 
-/** Keep a card's state pill and Reset button in step with its data. */
+/** Restore keyboard focus to a control after a full editor re-render. */
+function restoreEditorFocus(selector, fallbackSelector) {
+    if (!elements.presetEditor) return;
+    let target = elements.presetEditor.querySelector(selector);
+    if ((!target || target.disabled) && fallbackSelector) {
+        target = elements.presetEditor.querySelector(fallbackSelector);
+    }
+    if (target && !target.disabled) target.focus();
+}
+
+/** Keep a card's state pill, char count, sync hint, and Reset button in step. */
 function refreshBlockChrome(card, id) {
-    const block = editingBlocks().blocks[id];
-    const overridden = typeof block.text === 'string' && block.text !== '';
+    const block = editingBlocks()?.blocks?.[id];
+    if (!block) return;
+    const info = BLOCK_INFO[id] || {};
+    const editable = !info.positionOnly;
+    const overridden = editable && isBlockOverridden(id, block);
     const pill = card.querySelector('[data-state]');
-    if (pill) pill.textContent = block.enabled === false ? 'Off' : (overridden ? 'Edited' : 'Built-in');
+    if (pill) {
+        pill.textContent = block.enabled === false ? 'Off' : (overridden ? 'Edited' : 'Built-in');
+        pill.classList.remove('state-off', 'state-edited', 'state-builtin');
+        pill.classList.add(block.enabled === false ? 'state-off' : (overridden ? 'state-edited' : 'state-builtin'));
+    }
+    const countEl = card.querySelector('[data-char-count]');
+    if (countEl && editable) {
+        countEl.textContent = `${effectiveBlockText(id, block).length.toLocaleString()} ch`;
+    }
+    const syncNote = card.querySelector('[data-sync-note]');
+    if (syncNote) {
+        syncNote.textContent = overridden
+            ? 'Custom override for this preset'
+            : 'Matches built-in text (follows updates)';
+    }
     const reset = card.querySelector('[data-action="reset"]');
     if (reset) reset.disabled = !overridden;
 }
 
 /** Move a block within the system-layer order and re-render. */
-function moveBlock(id, delta) {
+function moveBlock(id, delta, focusAction) {
     const blocks = editingBlocks();
     if (!blocks) return;
     const order = blocks.order;
@@ -645,53 +968,189 @@ function moveBlock(id, delta) {
     if (from < 0 || to < 0 || to >= order.length) return;
     order.splice(to, 0, order.splice(from, 1)[0]);
     renderPresetEditor();
+    if (focusAction) {
+        const escaped = CSS.escape(id);
+        const altAction = focusAction === 'move-up' ? 'move-down' : 'move-up';
+        restoreEditorFocus(
+            `.preset-block[data-block-id="${escaped}"] [data-action="${focusAction}"]`,
+            `.preset-block[data-block-id="${escaped}"] [data-action="${altAction}"]`
+        );
+    }
+    queuePresetSave();
+}
+
+/** Move a cross-layer block (`profile`) between System and Message layers. */
+function moveBlockLayer(id, targetLayer, insertIndex = -1) {
+    const blocks = editingBlocks();
+    if (!blocks || !blocks.blocks[id]) return;
+    blocks.blocks[id].layer = targetLayer;
+    blocks.order = blocks.order.filter(x => x !== id);
+    if (targetLayer === 'system') {
+        if (insertIndex >= 0 && insertIndex <= blocks.order.length) {
+            blocks.order.splice(insertIndex, 0, id);
+        } else {
+            blocks.order.push(id);
+        }
+    }
+    renderPresetEditor();
+    restoreEditorFocus(`.preset-block[data-block-id="${CSS.escape(id)}"] [data-action="toggle-layer"]`);
     queuePresetSave();
 }
 
 /**
- * Native HTML5 drag to reorder. The ↑/↓ buttons cover the same ground for
- * keyboards and touch, where this doesn't fire at all — drag is the affordance
- * this audience reaches for first, not the only way in.
+ * Native HTML5 drag to reorder within System Layer and move cross-layer blocks
+ * (`profile`) between System Layer and Message Layer. Keyboard/touch users have
+ * ↑/↓ and → Message / ↑ System buttons covering the exact same actions.
  */
-function wireBlockDragging(host) {
+function wireBlockDragging(systemHost, messageHost) {
     let draggingId = null;
+    let draggingLayer = null;
+    let snapshotOrder = null;
+    let snapshotLayer = null;
+    let dropped = false;
+    let changed = false;
 
-    host.addEventListener('dragstart', (e) => {
-        const card = e.target.closest('.preset-block');
-        if (!card) return;
+    const isCrossLayer = (id) => (presetDefaults?.crossLayerBlockIds || []).includes(id);
+
+    const onDragStart = (e) => {
+        const card = e.target.closest('.preset-block[draggable="true"]');
+        if (!card || !card.dataset.blockId) return;
+        const blocks = editingBlocks();
+        if (!blocks) return;
         draggingId = card.dataset.blockId;
+        draggingLayer = card.dataset.layer;
+        snapshotOrder = [...blocks.order];
+        snapshotLayer = blocks.blocks[draggingId]?.layer;
+        dropped = false;
+        changed = false;
         card.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
-        // Firefox won't start a drag without data on the transfer.
         e.dataTransfer.setData('text/plain', draggingId);
-    });
+    };
 
-    host.addEventListener('dragover', (e) => {
+    const onDragEnd = () => {
         if (!draggingId) return;
-        e.preventDefault(); // permits the drop
-        const over = e.target.closest('.preset-block');
-        if (!over || over.dataset.blockId === draggingId) return;
+        const id = draggingId;
+        systemHost.classList.remove('is-drop-target');
+        if (messageHost) messageHost.classList.remove('is-drop-target');
+        draggingId = null;
+        draggingLayer = null;
+
+        if (!dropped) {
+            // Cancelled drag (Escape or dropped outside valid zones): roll back
+            // any live preview reorder so aborting never commits mutations.
+            const blocks = editingBlocks();
+            if (blocks && snapshotOrder) {
+                blocks.order = snapshotOrder;
+                if (snapshotLayer !== undefined && blocks.blocks[id]) {
+                    blocks.blocks[id].layer = snapshotLayer;
+                }
+            }
+            snapshotOrder = null;
+            snapshotLayer = null;
+            renderPresetEditor();
+            return;
+        }
+
+        snapshotOrder = null;
+        snapshotLayer = null;
+        if (changed) {
+            renderPresetEditor();
+            queuePresetSave();
+        } else {
+            elements.presetEditor.querySelectorAll('.preset-block.dragging')
+                .forEach(el => el.classList.remove('dragging'));
+        }
+    };
+
+    systemHost.addEventListener('dragstart', onDragStart);
+    systemHost.addEventListener('dragend', onDragEnd);
+    if (messageHost) {
+        messageHost.addEventListener('dragstart', onDragStart);
+        messageHost.addEventListener('dragend', onDragEnd);
+    }
+
+    systemHost.addEventListener('dragover', (e) => {
+        if (!draggingId) return;
+        if (draggingLayer !== 'system' && !isCrossLayer(draggingId)) return;
+        e.preventDefault();
+        systemHost.classList.add('is-drop-target');
+        if (messageHost) messageHost.classList.remove('is-drop-target');
+
         const blocks = editingBlocks();
+        if (!blocks) return;
+        const over = e.target.closest('#presetSystemBlocks > .preset-block[data-block-id]');
+
+        // Cross-layer drag preview into System Layer
+        if (draggingLayer !== 'system') {
+            blocks.blocks[draggingId].layer = 'system';
+            blocks.order = blocks.order.filter(x => x !== draggingId);
+            const targetIdx = over ? blocks.order.indexOf(over.dataset.blockId) : blocks.order.length;
+            blocks.order.splice(targetIdx >= 0 ? targetIdx : blocks.order.length, 0, draggingId);
+            const dragged = elements.presetEditor.querySelector(`.preset-block[data-block-id="${CSS.escape(draggingId)}"]`);
+            if (dragged) {
+                dragged.dataset.layer = 'system';
+                if (over) over.before(dragged);
+                else systemHost.appendChild(dragged);
+            }
+            draggingLayer = 'system';
+            changed = true;
+            return;
+        }
+
+        if (!over || over.dataset.blockId === draggingId) return;
         const order = blocks.order;
         const from = order.indexOf(draggingId);
         const to = order.indexOf(over.dataset.blockId);
         if (from < 0 || to < 0) return;
         order.splice(to, 0, order.splice(from, 1)[0]);
-        // Move the node itself rather than re-rendering mid-drag: a re-render
-        // would destroy the element the browser is dragging.
-        const dragged = host.querySelector(`.preset-block[data-block-id="${CSS.escape(draggingId)}"]`);
-        if (from < to) over.after(dragged);
-        else over.before(dragged);
+        const dragged = systemHost.querySelector(`.preset-block[data-block-id="${CSS.escape(draggingId)}"]`);
+        if (dragged) {
+            if (from < to) over.after(dragged);
+            else over.before(dragged);
+        }
+        changed = true;
     });
 
-    host.addEventListener('drop', (e) => e.preventDefault());
-
-    host.addEventListener('dragend', () => {
-        if (!draggingId) return;
-        draggingId = null;
-        renderPresetEditor(); // resync the ↑/↓ disabled states
-        queuePresetSave();
+    systemHost.addEventListener('dragleave', (e) => {
+        if (!systemHost.contains(e.relatedTarget)) {
+            systemHost.classList.remove('is-drop-target');
+        }
     });
+
+    systemHost.addEventListener('drop', (e) => {
+        e.preventDefault();
+        systemHost.classList.remove('is-drop-target');
+        if (draggingId && (draggingLayer === 'system' || isCrossLayer(draggingId))) {
+            dropped = true;
+        }
+    });
+
+    if (messageHost) {
+        messageHost.addEventListener('dragover', (e) => {
+            if (!draggingId || !isCrossLayer(draggingId)) return;
+            e.preventDefault();
+            messageHost.classList.add('is-drop-target');
+            systemHost.classList.remove('is-drop-target');
+        });
+        messageHost.addEventListener('dragleave', (e) => {
+            if (!messageHost.contains(e.relatedTarget)) {
+                messageHost.classList.remove('is-drop-target');
+            }
+        });
+        messageHost.addEventListener('drop', (e) => {
+            e.preventDefault();
+            messageHost.classList.remove('is-drop-target');
+            if (!draggingId || !isCrossLayer(draggingId)) return;
+            dropped = true;
+            const blocks = editingBlocks();
+            if (!blocks || blocks.blocks[draggingId]?.layer === 'message') return;
+            blocks.blocks[draggingId].layer = 'message';
+            blocks.order = blocks.order.filter(x => x !== draggingId);
+            draggingLayer = 'message';
+            changed = true;
+        });
+    }
 }
 
 // ===== Saving =====
