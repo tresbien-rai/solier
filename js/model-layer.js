@@ -39,8 +39,14 @@ export function getActiveModelConfig() {
     return state.currentModelConfig;
 }
 
+/** True when the active model layer has both a provider and a model id set (DF-01). */
+export function hasActiveModel(cfg = getActiveModelConfig()) {
+    return Boolean(cfg && cfg.provider && cfg.model);
+}
+
 /** Find a model's catalog entry, or null. */
 export function getCatalogEntry(provider, modelId) {
+    if (!provider || !modelId) return null;
     const models = state.settings.customModels[provider] || [];
     return models.find(m => m.id === modelId) || null;
 }
@@ -80,17 +86,12 @@ export function applyModelToLayer(provider, modelId) {
     const layer = getActiveModelConfig();
     if (layer.provider === provider && layer.model === modelId) return false;
     mirrorLayerToModelProfile();
-    if (layer.provider !== provider) {
-        layer.provider = provider;
-        // Provider-switch housekeeping. The old provider <select>, model
-        // dropdown, API-key field, and static Advanced params are gone (Slices
-        // 4–5) — switching is via catalog cards, the key is provider-owned, and
-        // params live in the per-model detail view. The send button still needs
-        // a refresh; the catalog/chips refresh on the ensuing updateUI.
-        updateSendButtonState();
-    }
-    layer.model = modelId;
+    layer.provider = provider || null;
+    layer.model = modelId || null;
     loadModelProfileIntoLayer();
+    // Always refresh the send button — transitioning model null ↔ id within
+    // the same provider (or across providers) changes send readiness (DF-01).
+    updateSendButtonState();
     return true;
 }
 
@@ -121,9 +122,12 @@ export function mergeModelConfig(serverConfig) {
     const incoming = serverConfig.modelParams || {};
     const incomingAnthropic = incoming.anthropic || {};
     const incomingGoogle = incoming.google || {};
+    // Normalize half-set pairs (e.g. legacy { provider: 'anthropic', model: '' }):
+    // both provider and model must be present for a model to count as set (DF-01).
+    const hasBoth = Boolean(serverConfig.provider && serverConfig.model);
     return {
-        provider: serverConfig.provider || defaults.provider,
-        model: serverConfig.model || defaults.model,
+        provider: hasBoth ? serverConfig.provider : defaults.provider,
+        model: hasBoth ? serverConfig.model : defaults.model,
         // Persona model-settings mode (WR-12). Absent = 'shared'; must survive
         // the merge or fixed personas would reset on every reload.
         ...(serverConfig.mode === 'fixed' ? { mode: 'fixed' } : {}),
@@ -242,11 +246,11 @@ export function formatNumber(num) {
 }
 
 export function getModelDisplayName(modelId) {
-    if (!modelId) return 'No model selected';
-
-    // Look up in custom models for current persona's provider
     const modelConfig = getActiveModelConfig();
-    const provider = modelConfig.provider;
+    const provider = modelConfig?.provider;
+    if (!modelId || !provider) return 'No model set';
+
+    // Look up in custom models for the active provider
     const providerModels = state.settings.customModels[provider] || [];
     const customModel = providerModels.find(m => m.id === modelId);
     if (customModel) {
@@ -258,30 +262,36 @@ export function getModelDisplayName(modelId) {
 }
 
 /**
- * Update the model name shown on the top-bar button and the composer chip.
- *
- * Moved out of js/router.js: it is a two-line write about the ACTIVE MODEL, not
- * about routing, and it had to move before js/views/models.js could own the
- * add-model modal — a view importing the router is the arrow the refactor
- * forbids. Same accident, same fix, as getActiveConversation.
+ * Update the model name shown on the composer chip and the Chats next-chat strip.
  */
 export function setModelIndicator(name) {
-    if (elements.composerModelName) elements.composerModelName.textContent = name;
+    const unset = !hasActiveModel();
+    const label = unset ? 'No model set' : name;
+    const title = unset ? 'Set a model in Models' : 'Switch model';
+    if (elements.composerModelName) elements.composerModelName.textContent = label;
+    if (elements.composerModelButton) {
+        elements.composerModelButton.classList.toggle('is-unset', unset);
+        elements.composerModelButton.title = title;
+        elements.composerModelButton.setAttribute('aria-label', title);
+    }
     const chatsModelName = document.getElementById('chatsModelName');
-    if (chatsModelName) chatsModelName.textContent = name;
+    if (chatsModelName) chatsModelName.textContent = label;
+    const chatsModelBtn = document.getElementById('chatsModelBtn');
+    if (chatsModelBtn) {
+        chatsModelBtn.classList.toggle('is-unset', unset);
+        chatsModelBtn.title = title;
+    }
 }
 
 /**
  * Safety net: if the active layer points at a model no longer in its provider's
  * catalog — e.g. it was removed while active — fall back to the provider's first
  * model and load that model's profile so its params come along. No-op when the
- * active model is valid or the provider has no models.
- *
- * Moved here from main.js with the add-model modal: it touches only the layer and
- * the catalog, never the DOM, and `loadModelProfileIntoLayer` is right here.
+ * layer is intentionally unset (provider/model null) or valid.
  */
 export function ensureActiveModelValid() {
     const modelConfig = getActiveModelConfig();
+    if (!modelConfig.provider || !modelConfig.model) return;
     const providerModels = state.settings.customModels[modelConfig.provider] || [];
     if (providerModels.length === 0) return;
     if (!providerModels.some(m => m.id === modelConfig.model)) {
@@ -293,12 +303,13 @@ export function ensureActiveModelValid() {
 export function updateSendButtonState() {
     const modelConfig = getActiveModelConfig();
     const provider = modelConfig.provider;
-    const hasApiKey = !!state.apiKeyStatus[provider]?.hasKey;
+    const hasModel = hasActiveModel(modelConfig);
+    const hasApiKey = hasModel && !!state.apiKeyStatus[provider]?.hasKey;
     const hasMessage = elements.messageInput.value.trim().length > 0;
     const hasAttachments = state.pendingAttachments.length > 0;
     const notLoading = !state.isLoading;
 
-    elements.sendButton.disabled = !(hasApiKey && (hasMessage || hasAttachments) && notLoading);
+    elements.sendButton.disabled = !(hasModel && hasApiKey && (hasMessage || hasAttachments) && notLoading);
     // Lock/unlock the file panel editor in step with the turn (SP-03b). This is
     // the one place isLoading transitions are always reflected in the UI.
     FilePanel.syncTurnLock();

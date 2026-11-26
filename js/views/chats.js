@@ -20,7 +20,7 @@ import {
 } from '../shell.js';
 import {
     personaModelMode, findModelProvider, applyModelToLayer,
-    getActiveModelConfig, getModelDisplayName,
+    getActiveModelConfig, hasActiveModel, getModelDisplayName,
 } from '../model-layer.js';
 import { persistSettings } from '../settings-store.js';
 import { setActiveConversation, forgetConversationDraft } from '../active-conversation.js';
@@ -1008,7 +1008,7 @@ export function renderChatsListMain() {
                         <span class="chats-next-name">${escapeHtml(personaName)}</span>
                         ${NEXT_CHEVRON_SVG}
                     </button>
-                    <button class="chats-next-pill model" id="chatsModelBtn" type="button" aria-haspopup="true" title="Switch model" aria-label="Model for next chat">
+                    <button class="chats-next-pill model${hasActiveModel() ? '' : ' is-unset'}" id="chatsModelBtn" type="button" aria-haspopup="true" title="${hasActiveModel() ? 'Switch model' : 'Set a model in Models'}" aria-label="Model for next chat">
                         <span class="chats-next-name" id="chatsModelName">${escapeHtml(modelName)}</span>
                         ${NEXT_CHEVRON_SVG}
                     </button>
@@ -1045,7 +1045,14 @@ export function renderChatsListMain() {
     const pb = c.querySelector('#chatsPersonaBtn');
     if (pb) pb.addEventListener('click', (e) => { e.stopPropagation(); showPersonaPopover(pb); });
     const mb = c.querySelector('#chatsModelBtn');
-    if (mb) mb.addEventListener('click', (e) => { e.stopPropagation(); showModelMenu(mb); });
+    if (mb) mb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!hasActiveModel()) {
+            navigate({ type: 'models' });
+            return;
+        }
+        showModelMenu(mb);
+    });
 
     const searchInput = c.querySelector('#chatsSearchInput');
     const clearBtn = c.querySelector('#chatsSearchClear');

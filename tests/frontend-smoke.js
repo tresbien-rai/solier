@@ -529,17 +529,22 @@ export async function run(opts = {}) {
     const toRun = opts.only ? CHECKS.filter((c) => opts.only.includes(c.id)) : CHECKS;
 
     // ---- capture everything we are about to touch -------------------------
+    const activeLayer = t.getActiveModelConfig();
     const saved = {
         stream: API.chat.stream,
         send: API.chat.send,
         conversationId: state.activeConversationId,
         view: state.ui.mainView,
         draft: elements.messageInput.value,
-        provider: t.getActiveModelConfig().provider,
+        provider: activeLayer.provider,
+        model: activeLayer.model,
         chatsSearch: state.ui.chatsSearch,
         chatsPersonaFilter: state.ui.chatsPersonaFilter,
     };
-    const keyStatus = state.apiKeyStatus[saved.provider];
+    // Fresh accounts start with provider/model null (DF-01); temporarily assign
+    // a stub provider/model so send-path checks exercise the real guard + stream.
+    const testProvider = saved.provider || 'anthropic';
+    const keyStatus = state.apiKeyStatus[testProvider];
     const savedHasKey = keyStatus ? keyStatus.hasKey : undefined;
 
     const ctx = { chatA: null, chatB: null };
@@ -550,6 +555,10 @@ export async function run(opts = {}) {
         state.ui.chatsSearch = '';
         state.ui.chatsPersonaFilter = 'all';
 
+        if (!activeLayer.provider || !activeLayer.model) {
+            activeLayer.provider = testProvider;
+            activeLayer.model = saved.model || 'smoke-test-model';
+        }
         // A stubbed provider needs no real key, but sendMessage's guard checks
         // one — force it on for the run.
         if (keyStatus) keyStatus.hasKey = true;
@@ -596,7 +605,20 @@ export async function run(opts = {}) {
     } finally {
         API.chat.stream = saved.stream;
         API.chat.send = saved.send;
+        const injectedStubModel = !saved.provider || !saved.model;
+        activeLayer.provider = saved.provider;
+        activeLayer.model = saved.model;
         if (keyStatus && savedHasKey !== undefined) keyStatus.hasKey = savedHasKey;
+        if (injectedStubModel) {
+            // Auto-save checks (e.g. persona-traits-survive-autosave) persist
+            // state.currentModelConfig to SQLite; restore the unset state on the server too.
+            try {
+                await API.settings.update({ currentModelConfig: activeLayer });
+            } catch (err) {
+                console.warn('Harness could not restore unset currentModelConfig:', err);
+            }
+            t.updateUI();
+        }
 
         for (const id of [ctx.chatA, ctx.chatB]) {
             if (!id) continue;

@@ -20,13 +20,12 @@ export const CONFIG = {
     // bundle extension or its format string — those are data, not branding.
     brand: 'Solier',
     defaults: {
-        provider: 'anthropic',
-        model: 'claude-sonnet-4-20250514',
-        assistantName: 'Assistant',
-        // Persona voice only. The expression protocol is NOT stated here — the
-        // server's Tessera base layer supplies it, generated from the persona's
-        // real expression set, so it can never go stale the way this text did.
-        systemPrompt: `You are a helpful, friendly assistant. You provide clear and concise answers while being warm and personable.`,
+        provider: null,
+        model: null,
+        assistantName: 'Soli',
+        // Persona voice only. Empty fallback so clearing General guidance on a
+        // trait/section-based persona never silently restores generic boilerplate.
+        systemPrompt: '',
         avatarSize: 'medium',
         avatarPosition: 'top-right',
         showAvatar: true,
@@ -74,12 +73,12 @@ export function getDefaultModelConfig() {
             temperature: 1.0,
             topP: 0.95,
             topK: 40,
-            maxTokens: 4096,
+            maxTokens: 8192,
             stopSequences: [],
             // Response prefill — an "engine" param like temperature, saved per
             // model profile (moved off the persona; personas are pure skin).
             prefill: '',
-            streaming: false,
+            streaming: true,
             temperatureEnabled: true,
             topPEnabled: true,
             topKEnabled: true,

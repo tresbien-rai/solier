@@ -310,7 +310,7 @@
                     <h3>Identity</h3>
 
                     <label for="assistantName">Name</label>
-                    <input type="text" id="assistantName" placeholder="e.g., Clara, The Editor, Assistant" value="Assistant">
+                    <input type="text" id="assistantName" placeholder="e.g., Soli, Clara, The Editor">
 
                     <!-- Card display fields. Neither is sent to the model —
                          they're how the persona introduces itself in the grid. -->
@@ -347,7 +347,7 @@
 
                     <label for="systemPrompt">General guidance</label>
                     <div class="textarea-resizable">
-                        <textarea id="systemPrompt" rows="8" placeholder="Keep replies under three paragraphs unless asked for depth. When reviewing drafts, quote the exact line before suggesting a cut.">You are a helpful, friendly assistant. You provide clear and concise answers while being warm and personable.</textarea>
+                        <textarea id="systemPrompt" rows="8" placeholder="Keep replies under three paragraphs unless asked for depth. When reviewing drafts, quote the exact line before suggesting a cut."></textarea>
                         <div class="textarea-resize-handle" aria-hidden="true" title="Drag to resize"></div>
                     </div>
                     <p class="help-text">Anything that doesn't fit the sections above — habits, boundaries, formatting rules — or the entire persona if you prefer writing in one place.</p>
@@ -713,7 +713,7 @@
                 <div class="messages-container" id="messagesContainer">
                     <div class="welcome-message">
                         <h1>Welcome to Solier</h1>
-                        <p>Add an API key in <strong>Models</strong> to start a conversation.</p>
+                        <p>Add an API key and pick a model in <strong>Models</strong> to start.</p>
                         <button type="button" class="btn btn-primary btn-pill welcome-models-btn" id="welcomeModelsBtn">Go to Models</button>
                     </div>
                 </div>
@@ -797,7 +797,7 @@
                             <span class="preset-pill-name">Built-in prompt</span>
                         </button>
                         <button class="model-button composer-model-button" id="composerModelButton" aria-haspopup="true" title="Switch model" aria-label="Switch model">
-                            <span class="model-badge" id="composerModelName">Model</span>
+                            <span class="model-badge" id="composerModelName">No model set</span>
                             <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
                         </button>
                         <button class="send-button" id="sendButton" disabled aria-label="Send message">

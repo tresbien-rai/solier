@@ -23,7 +23,7 @@ import { elements, scrollToBottom, scrollToBottomIfPinned, isPinnedToBottom } fr
 import { API } from '../api-client.js';
 import { CONFIG } from '../config.js';
 import { getActivePersona, getActiveConversation } from '../state.js';
-import { getActiveModelConfig, updateSendButtonState, paramSupported } from '../model-layer.js';
+import { getActiveModelConfig, hasActiveModel, updateSendButtonState, paramSupported } from '../model-layer.js';
 import { createConversation, renderConversation, maybeAutoTitle } from '../views/chats.js';
 import { renderRail } from '../shell.js';
 import { UiPrefs } from '../ui-prefs.js';
@@ -128,6 +128,16 @@ export async function rerunFromMessage(msgIndex) {
     if (!activeConvo || !activeConvo.messages[msgIndex]) return;
     if (state.isLoading) return;
 
+    const modelConfig = getActiveModelConfig();
+    if (!hasActiveModel(modelConfig)) {
+        showToast('Set a model in Models before re-running a message.', { type: 'warning' });
+        return;
+    }
+    if (!state.apiKeyStatus[modelConfig.provider]?.hasKey) {
+        showToast('Add an API key in Models before re-running a message.', { type: 'warning' });
+        return;
+    }
+
     const msg = activeConvo.messages[msgIndex];
 
     // The turn being re-rolled = the user-message count up to (and including) it.
@@ -193,7 +203,7 @@ export function retryLastUserMessage() {
 export async function sendMessageFromText(text, attachments = []) {
     const modelConfig = getActiveModelConfig();
     const provider = modelConfig.provider;
-    if (!state.apiKeyStatus[provider]?.hasKey || state.isLoading) return;
+    if (!hasActiveModel(modelConfig) || !state.apiKeyStatus[provider]?.hasKey || state.isLoading) return;
 
     // Commit a dirty scratchpad draft first (Decision 11), same as sendMessage.
     await FilePanel.autoSaveScratchpadOnSend();
@@ -299,10 +309,11 @@ export async function sendMessage() {
     const userMessage = elements.messageInput.value.trim();
     const modelConfig = getActiveModelConfig();
     const provider = modelConfig.provider;
-    const hasApiKey = !!state.apiKeyStatus[provider]?.hasKey;
+    const hasModel = hasActiveModel(modelConfig);
+    const hasApiKey = hasModel && !!state.apiKeyStatus[provider]?.hasKey;
 
     const hasAttachments = state.pendingAttachments.length > 0;
-    if ((!userMessage && !hasAttachments) || !hasApiKey || state.isLoading) {
+    if ((!userMessage && !hasAttachments) || !hasModel || !hasApiKey || state.isLoading) {
         return;
     }
 

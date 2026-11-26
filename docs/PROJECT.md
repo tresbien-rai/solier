@@ -440,6 +440,9 @@ server log and against Drive, not just from the model's reply:
   `file_revisions.turn`); tidy up some time.
 - Intermittent: about 1 turn in 12 on Gemini once returned tool-call syntax as
   text with no tool run. Not reproducible; looks model-side.
+- Persona trait library (`js/persona-traits.js`) currently writes trait sentences
+  from a first-person user perspective (`"me"` meaning the user). Plan a wording
+  pass to neutral third-person (`"the user"`) to match the v2 system prompt voice.
 
 ---
 
@@ -632,3 +635,4 @@ check it isn't here, then add it.** (Two features once both used `P-`.)
 | DOC | Documentation housekeeping |
 | TT | Tool trail in history |
 | PT | Persona traits |
+| DF | Defaults v2 (starter persona Soli, unset model, v2 prompt architecture & workbench editor) |

@@ -90,7 +90,7 @@ import {
 import { openModelModal, setupModelsEvents } from './views/models.js';
 import { navigate, registerShell, renderRail, renderModelsCatalog, mobileMenuButtonHTML } from './shell.js';
 import {
-    getModelDisplayName, getActiveModelConfig, personaModelMode,
+    getModelDisplayName, getActiveModelConfig, hasActiveModel, personaModelMode,
     mirrorLayerToModelProfile, mergeModelConfig, updateSendButtonState,
     setModelIndicator, ensureActiveModelValid,
 } from './model-layer.js';
@@ -663,7 +663,7 @@ function updateSettingsUI() {
     const modelDisplay = document.querySelector('.model-display');
     if (modelDisplay) {
         const modelConfig = getActiveModelConfig();
-        modelDisplay.textContent = modelConfig.model;
+        modelDisplay.textContent = getModelDisplayName(modelConfig.model);
     }
 
     // Update status bar
@@ -1131,6 +1131,10 @@ function buildPreviewParams() {
  * exact provider request body, then show it as pretty-printed JSON.
  */
 async function previewCurrentRequest() {
+    if (!hasActiveModel()) {
+        showToast('Set a model in Models before previewing a request.', { type: 'warning' });
+        return;
+    }
     let result;
     try {
         result = await API.chat.preview(buildPreviewParams());
@@ -1733,7 +1737,7 @@ function setupEventListeners() {
     // phone strip, page title, and character counters while typing. The values
     // themselves are persisted by autoSaveSettings (wired above).
     elements.assistantName.addEventListener('input', () => {
-        const name = elements.assistantName.value || 'Assistant';
+        const name = elements.assistantName.value || CONFIG.defaults.assistantName;
         const editTitle = document.getElementById('personaEditTitle');
         if (editTitle) editTitle.textContent = name;
         syncPersonaEditorPreview({ fromInputs: true });

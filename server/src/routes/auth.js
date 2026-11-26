@@ -49,30 +49,39 @@ const SCOPES = [
 ];
 
 /**
+ * Default starter persona seeded for every brand-new user (DF-01).
+ * Soli is Solier's starter companion — minimally configured with a handful of
+ * traits from `js/persona-traits.js` so new users see how the 6-section trait
+ * editor works, and `mode: 'shared'` so it never pins a hardcoded model.
+ */
+const DEFAULT_STARTER_PERSONA = {
+  name: 'Soli',
+  roleLabel: 'Companion',
+  tagline: 'Always a spare chair by the window.',
+  traits: {
+    personality: [{ id: 'calm' }, { id: 'warm' }, { id: 'curious' }],
+    speech: [{ id: 'conversational' }],
+    expertise: [{ id: 'general_helper' }],
+    relationship: [{ id: 'peer' }],
+  },
+  systemPrompt: "Keep answers clear and grounded, say when you're unsure, and match the pace of the conversation.",
+  modelConfig: { mode: 'shared' },
+};
+
+/**
  * Seed a brand-new user with the default persona + settings. Shared by the
  * OAuth callback and the dev-login path so both produce an identical starting
  * state.
  * @param {string} userId
  */
 function seedNewUserDefaults(userId) {
-  dal.createPersona(userId, {
-    name: 'Assistant',
-    systemPrompt: 'You are a helpful AI assistant.',
-    modelConfig: {
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
-      modelParams: {
-        temperature: 1.0,
-        maxTokens: 8192,
-        streaming: true,
-      },
-    },
-  });
+  dal.createPersona(userId, DEFAULT_STARTER_PERSONA);
 
   dal.upsertSettings(userId, {
     avatarSize: 'medium',
     avatarPosition: 'top-right',
     showAvatar: true,
+    currentModelConfig: { provider: null, model: null },
   });
 }
 
@@ -343,5 +352,8 @@ if (config.allowDevLogin) {
 
   logger.warn('Dev-login bypass is ENABLED (POST /api/auth/dev-login) — dev only');
 }
+
+router.DEFAULT_STARTER_PERSONA = DEFAULT_STARTER_PERSONA;
+router.seedNewUserDefaults = seedNewUserDefaults;
 
 module.exports = router;
