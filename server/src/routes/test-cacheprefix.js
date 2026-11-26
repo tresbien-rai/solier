@@ -309,6 +309,45 @@ function renderMessages(messages) {
       assert.ok(!String(sysProfRes.messages[0].content).includes('<user_profile>'), 'not duplicated in messages');
     });
 
+    // Preset placing <current_context> AFTER latest user message (DF-03)
+    const afterPreset = dal.createPromptPreset(userId, {
+      name: 'context-after-user',
+      blocks: {
+        blocks: { state: { position: 'after' } },
+      },
+    });
+    dal.updateConversation(bareConvo.id, userId, { presetId: afterPreset.id });
+    const afterReq = reqFor(userId, { conversationId: bareConvo.id, messages: turn1 });
+    const afterRes = await assembleChatRequest(afterReq, resolveRequestContainers(afterReq), {
+      systemPrompt: 'You are Vela, a terse navigator.',
+      messages: turn1,
+      expressionNames: [],
+      model: 'claude-opus-5',
+    });
+    const afterReq2 = reqFor(userId, { conversationId: bareConvo.id, messages: turn2 });
+    const afterRes2 = await assembleChatRequest(afterReq2, resolveRequestContainers(afterReq2), {
+      systemPrompt: 'You are Vela, a terse navigator.',
+      messages: turn2,
+      expressionNames: [],
+      model: 'claude-opus-5',
+    });
+    check('preset with state.position="after" appends `<current_context>` after user text while keeping prefix stable', () => {
+      const last = afterRes.messages[afterRes.messages.length - 1];
+      const text = String(last.content);
+      const msgIdx = text.indexOf('Plot a course.');
+      const ctxIdx = text.indexOf('<current_context>');
+      assert.ok(msgIdx !== -1 && ctxIdx !== -1 && msgIdx < ctxIdx, 'user text precedes <current_context>');
+      assert.strictEqual(afterRes.system, withFileRes.system, 'system prompt unchanged by state.position');
+      assert.strictEqual(afterRes2.system, afterRes.system, 'system prompt unchanged across turns');
+      const before = renderMessages(afterRes.messages);
+      const after = renderMessages(afterRes2.messages);
+      assert.deepStrictEqual(
+        after.slice(0, before.length - 1),
+        before.slice(0, before.length - 1),
+        'cached message prefix ahead of volatile turn stays byte-identical'
+      );
+    });
+
   } catch (err) {
     console.log(`   ✗ setup failed: ${err.message}`);
     console.log(err.stack);

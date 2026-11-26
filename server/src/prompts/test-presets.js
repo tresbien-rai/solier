@@ -23,10 +23,10 @@ const assert = require('node:assert');
 const config = require('../config');
 const {
   buildSystemPrompt, buildContextAck, composeSystemPrompt, describeContextAck,
-  sessionStateBlock, describeSessionState,
+  sessionStateBlock, resolveStatePosition, describeSessionState,
   buildCapabilitiesBlock, buildProfileMessageBlock, describeProfileMessageBlock,
   ORIENTATION, CONTEXT_ACK,
-  CAPABILITY_WORKSPACE, CAPABILITY_FILE_TOOLS, SCRATCHPAD_SECTION, EXPRESSION_SECTION,
+  CAPABILITY_WORKSPACE, CAPABILITY_FILE_TOOLS, CAPABILITY_SECTIONS, SCRATCHPAD_SECTION, EXPRESSION_SECTION,
 } = require('./tessera');
 const {
   PRESET_NONE,
@@ -651,6 +651,32 @@ check('the system prompt is byte-identical across differing session state', () =
     sessionState: '<session_state>\nScratchpad: 4,918 characters\nFiles: 3 in this conversation\n</session_state>',
   });
   assert.strictEqual(a, b, 'session state must not move a single byte of the system prompt');
+});
+
+check('state.position defaults to before, accepts after, and rejects invalid values (DF-03)', () => {
+  assert.strictEqual(defaultBlocks().blocks.state.position, 'before');
+  assert.strictEqual(resolveStatePosition({}), 'before');
+  assert.strictEqual(resolveStatePosition({ preset: { blocks: { state: { position: 'after' } } } }), 'after');
+  assert.strictEqual(normalizeBlocks({ blocks: { state: { position: 'bogus' } } }).blocks.state.position, 'before');
+  assert.strictEqual(validateBlocks({ blocks: { state: { position: 'before' } } }).ok, true);
+  assert.strictEqual(validateBlocks({ blocks: { state: { position: 'after' } } }).ok, true);
+  assert.strictEqual(validateBlocks({ blocks: { state: { position: 'bogus' } } }).ok, false);
+  assert.strictEqual(validateBlocks({ blocks: { orientation: { position: 'after' } } }).ok, false);
+  assert.strictEqual(describeSessionState({ preset: { blocks: { state: { position: 'after' } } } }).position, 'after');
+  const includedAfter = describeSessionState({
+    preset: { blocks: { state: { position: 'after' } } },
+    sessionState: '<session_state>\nWorkspace: none\n</session_state>',
+  });
+  assert.strictEqual(includedAfter.included, true);
+  assert.strictEqual(includedAfter.position, 'after');
+});
+
+check('CAPABILITY_SECTIONS exposes all 4 server-managed sub-sections for the workbench UI', () => {
+  assert.deepStrictEqual(
+    CAPABILITY_SECTIONS.map(s => s.id),
+    ['workspace', 'file_tools', 'scratchpad', 'expressions']
+  );
+  assert.ok(CAPABILITY_SECTIONS.every(s => s.title && s.condition && s.text));
 });
 
 console.log('\n' + '='.repeat(60));

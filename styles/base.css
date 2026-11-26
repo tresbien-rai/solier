@@ -145,8 +145,10 @@ body {
     }
 }
 
-/* Ensure the HTML5 `hidden` attribute always wins over component display rules */
-[hidden] {
+/* Ensure the HTML5 `hidden` attribute always wins over component display rules,
+   while letting `hidden="until-found"` keep UA `content-visibility: hidden` so
+   native Find-in-Page and `beforematch` still work. */
+[hidden]:not([hidden="until-found" i]) {
     display: none !important;
 }
 

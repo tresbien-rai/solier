@@ -1426,7 +1426,7 @@
     color: var(--text-muted);
 }
 
-/* ===== Prompt preset block editor (AP-03) ===== */
+/* ===== Prompt preset workbench editor (AP-03 / DF-03) ===== */
 .preset-editor[hidden] {
     display: none;
 }
@@ -1435,14 +1435,21 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 4px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    margin-bottom: 6px;
 }
 
 .preset-editor-head-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+#presetToggleAllBtn[aria-expanded="true"] .toggle-all-expand,
+#presetToggleAllBtn[aria-expanded="false"] .toggle-all-collapse {
+    display: none;
 }
 
 .preset-list-actions {
@@ -1455,7 +1462,7 @@
     font-size: var(--text-base);
     font-weight: 600;
     color: var(--text-primary);
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 
 /* Reads as ambient status, not as a control — it changes on its own. */
@@ -1464,28 +1471,76 @@
     color: var(--text-muted);
 }
 
+/* Layer panel (System Layer / Message Layer) */
+.preset-layer {
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--surface-tint) 55%, var(--bg-primary));
+}
+
+.preset-layer-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 0 4px 10px;
+}
+
+.preset-layer-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+}
+
+.preset-layer-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
 .preset-blocks {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    margin-bottom: 16px;
+    gap: 8px;
+    min-height: 28px;
+    padding: 2px;
+    border-radius: var(--radius-md);
+    transition: background-color 0.15s;
 }
 
+.preset-blocks.is-drop-target {
+    background: var(--accent-subtle);
+}
+
+/* Individual block card */
 .preset-block {
-    padding: 12px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     background: var(--bg-secondary);
+    box-shadow: var(--shadow-xs);
+    overflow: hidden;
+    transition: border-color 0.15s, opacity 0.15s;
+}
+
+.preset-block.preset-block-info {
+    border-style: dashed;
+    background: color-mix(in srgb, var(--bg-secondary) 75%, var(--bg-primary));
+    box-shadow: none;
 }
 
 /* A disabled block stays legible — you are still editing it — but shouldn't
    read as part of the prompt at a glance. */
 .preset-block.is-off {
-    opacity: 0.6;
+    opacity: 0.58;
 }
 
 .preset-block.dragging {
-    opacity: 0.4;
+    opacity: 0.42;
+    border-style: dashed;
     border-color: var(--accent);
 }
 
@@ -1493,106 +1548,294 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 6px;
+    padding: 8px 10px;
+    min-height: 42px;
 }
 
 .preset-block-grip {
+    flex-shrink: 0;
     cursor: grab;
     color: var(--text-muted);
     letter-spacing: -2px;
+    padding: 2px 3px;
+    border-radius: 4px;
     user-select: none;
+    line-height: 1;
 }
 
-.preset-block[draggable="true"] {
-    /* The whole card is the drag handle; the grip is the affordance for it. */
-    cursor: grab;
-}
-
-.preset-block-title {
-    flex: 1;
-    min-width: 0;
-    font-size: var(--text-sm);
-    font-weight: 600;
+.preset-block-grip:hover {
     color: var(--text-primary);
+    background: var(--surface-tint);
 }
 
-.preset-block-state {
+.preset-block-grip:active {
+    cursor: grabbing;
+}
+
+.preset-block-trigger {
+    flex: 1 1 160px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    padding: 2px 0;
+    margin: 0;
+    font: inherit;
+    text-align: left;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.preset-block-trigger:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Chevron right before label text for easy vertical scanning (accordion guide) */
+.preset-block-chevron {
     flex-shrink: 0;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     color: var(--text-muted);
 }
 
-/* Stands in for the toggle on a locked block (the session-state block): it can
-   be moved but not edited or switched off, so there is nothing to toggle. */
+.preset-block-chevron::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-right: 1.75px solid currentColor;
+    border-bottom: 1.75px solid currentColor;
+    transform: rotate(-45deg);
+    margin-right: 2px;
+}
+
+.preset-block.is-open .preset-block-chevron::before {
+    transform: rotate(45deg);
+    margin-right: 0;
+    margin-bottom: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .preset-block-chevron::before {
+        transition: transform 0.16s ease;
+    }
+}
+
+.preset-block-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.25;
+}
+
+/* Compact metadata pills (role, cacheability, edit state) */
+.preset-pill-tag {
+    display: inline-flex;
+    align-items: center;
+    height: 19px;
+    padding: 0 7px;
+    border-radius: var(--radius-full);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.preset-pill-tag.role-system {
+    background: var(--accent-subtle);
+    color: var(--accent);
+}
+
+.preset-pill-tag.role-user {
+    background: color-mix(in srgb, var(--info, #1d6fc2) 14%, transparent);
+    color: var(--info, #1d6fc2);
+}
+
+.preset-pill-tag.role-assistant {
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    color: var(--success);
+}
+
+.preset-pill-tag.role-history {
+    background: var(--surface-tint);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.preset-pill-tag.cache-cached {
+    background: color-mix(in srgb, var(--success) 11%, transparent);
+    color: var(--success);
+}
+
+.preset-pill-tag.cache-volatile {
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    color: var(--warning);
+}
+
+.preset-pill-tag.state-builtin {
+    background: var(--surface-tint);
+    color: var(--text-muted);
+}
+
+.preset-pill-tag.state-edited {
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+.preset-pill-tag.state-off {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+.preset-pill-tag.state-data {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+}
+
+.preset-block-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.preset-char-count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.preset-action.preset-action-xs {
+    height: 26px;
+    padding: 0 9px;
+    font-size: 11px;
+}
+
+.preset-action.preset-action-icon {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+}
+
+.preset-action:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.preset-action:disabled:hover {
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+/* Compact segmented toggle for Current context Before / After placement */
+.segmented.preset-pos-seg {
+    padding: 2px;
+    border-radius: var(--radius-sm);
+}
+
+.segmented.preset-pos-seg button {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+    border-radius: calc(var(--radius-sm) - 2px);
+}
+
+/* Locked badge on Protected / Auto blocks */
 .preset-block-locked {
     flex-shrink: 0;
-    margin-left: auto;
     font-size: 10px;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--accent);
     background: var(--accent-subtle);
-    padding: 2px 8px;
+    padding: 3px 8px;
     border-radius: var(--radius-full);
+    line-height: 1;
 }
 
-.preset-block-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+.preset-block-switch {
     flex-shrink: 0;
-    margin-bottom: 0;
-    font-size: var(--text-xs);
-    color: var(--text-secondary);
-    cursor: pointer;
+    transform: scale(0.86);
+    transform-origin: right center;
 }
 
-/* .settings-section label sets display:block + a bottom margin; the inline
-   toggle inside a card wants neither. */
-.settings-section .preset-block-toggle {
-    display: inline-flex;
-    margin-bottom: 0;
+/* Expanded disclosure body */
+.preset-block-body {
+    padding: 12px 12px 14px;
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+    background: color-mix(in srgb, var(--surface-tint) 45%, var(--bg-secondary));
 }
 
 .preset-block-desc {
     font-size: var(--text-xs);
     line-height: 1.5;
     color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.preset-block-cond {
+    display: block;
+    font-size: var(--text-xs);
+    line-height: 1.45;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.preset-block-subbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
     margin-bottom: 8px;
 }
 
-/* The "only sent when…" clause: a preset controls wording, never whether a
-   block applies, and this is where that shows up in the UI. */
-.preset-block-cond {
-    display: block;
+.preset-block-sync {
+    font-size: 11px;
     color: var(--text-muted);
 }
 
-/* Overrides `.settings-section textarea`, which is sized for short fields.
-   The box, border and sizing come from the shared `.textarea-resizable`
-   wrapper — no `resize` here, or the native grip would return alongside the
-   drag-bar. Uses the same `--font-main` and `--text-sm` as every other prose
-   textarea in the app so the font doesn't jump mid-block (UIP-01). */
+/* Auto-sizing editable prompt textarea (field-sizing: content with graceful
+   scroll fallback on browsers without support). Explicit width: 100% avoids
+   horizontal jitter while height: auto lets it grow vertically up to 24lh. */
 .settings-section .preset-block-text {
-    min-height: 120px;
+    width: 100%;
+    height: auto;
+    field-sizing: content;
+    min-height: 110px;
+    min-block-size: 5lh;
+    max-block-size: 24lh;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    color: var(--text-primary);
     font-family: var(--font-main);
     font-size: var(--text-sm);
     line-height: 1.5;
-    /* Long prompt lines wrap rather than scrolling sideways (UI principle). */
+    resize: vertical;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
 
-/* The warning line beneath owns the gap, so the wrapper adds none. */
-.preset-block .textarea-resizable {
-    margin-bottom: 0;
-}
-
-.preset-block-text::placeholder {
-    color: var(--text-muted);
-    opacity: 0.7;
+.settings-section .preset-block-text:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 .preset-block-warn {
@@ -1604,6 +1847,77 @@
 
 .preset-block-warn[hidden] {
     display: none;
+}
+
+/* Read-only capabilities sub-section list & persona/anchor preview */
+.preset-cap-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.preset-cap-item {
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+}
+
+.preset-cap-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-bottom: 6px;
+}
+
+.preset-cap-title {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.preset-cap-cond {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.preset-cap-preview {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--surface-tint) 65%, var(--bg-secondary));
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* Dashed cache boundary divider inside Message Layer */
+.preset-cache-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--warning);
+}
+
+.preset-cache-divider::before,
+.preset-cache-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: repeating-linear-gradient(90deg, var(--warning) 0 5px, transparent 5px 9px);
+    opacity: 0.65;
+}
+
+.preset-editor-preview {
+    margin-top: 16px;
 }
 
 .preset-group-label {
@@ -1638,6 +1952,25 @@
 .preset-macros code {
     font-family: var(--font-mono);
     color: var(--accent);
+}
+
+@media (max-width: 640px) {
+    .preset-layer {
+        padding: 10px 8px;
+    }
+    .preset-block-head {
+        flex-wrap: wrap;
+        padding: 8px;
+    }
+    .preset-block-actions {
+        width: 100%;
+        justify-content: flex-end;
+        padding-top: 4px;
+        border-top: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent);
+    }
+    .preset-char-count {
+        margin-right: auto;
+    }
 }
 
 /* ===== Prompt inspector (AP-05) ===== */

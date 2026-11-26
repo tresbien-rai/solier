@@ -35,7 +35,7 @@ const {
   CROSS_LAYER_BLOCK_IDS,
   MACRO_REFERENCE,
 } = require('../prompts/presets');
-const { BUILTIN_BLOCK_TEXT } = require('../prompts/tessera');
+const { BUILTIN_BLOCK_TEXT, CAPABILITY_SECTIONS } = require('../prompts/tessera');
 
 const router = express.Router();
 
@@ -60,6 +60,7 @@ function assertValid(result) {
 router.get('/defaults', asyncHandler(async (req, res) => {
   res.json({
     blocks: BUILTIN_BLOCK_TEXT,
+    capabilitySections: CAPABILITY_SECTIONS,
     systemBlockIds: SYSTEM_BLOCK_IDS,
     messageBlockIds: MESSAGE_BLOCK_IDS,
     crossLayerBlockIds: CROSS_LAYER_BLOCK_IDS,

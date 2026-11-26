@@ -16,13 +16,13 @@ const { asyncHandler } = require('../middleware/errorHandler');
 const { getDecryptedApiKey } = require('./apiKeys');
 const dal = require('../db/dal');
 const { assembleProjectContext, assembleWorkspaceContext } = require('../utils/projectContext');
-const { resolveActiveFileBlock, prependToLastUserMessage } = require('../utils/activeFiles');
+const { resolveActiveFileBlock, prependToLastUserMessage, appendToLastUserMessage } = require('../utils/activeFiles');
 const { resolveScratchpadBlock } = require('../utils/scratchpadContext');
 const { TOOL_DEFINITIONS, SCRATCHPAD_TOOL_DEFINITIONS } = require('../tools/definitions');
 const config = require('../config');
 const {
   buildSystemPrompt, buildContextAck, composeSystemPrompt, describeContextAck,
-  sessionStateBlock, describeSessionState,
+  sessionStateBlock, resolveStatePosition, describeSessionState,
   buildProfileMessageBlock, describeProfileMessageBlock,
 } = require('../prompts/tessera');
 const { buildSessionState, hasSessionContext } = require('../prompts/sessionState');
@@ -337,7 +337,9 @@ async function assembleChatRequest(req, containers, { systemPrompt, messages, ex
 
     if (contextParts.length > 0) {
       const currentContext = `<current_context>\n${contextParts.join('\n\n')}\n</current_context>`;
-      trailingMessages = prependToLastUserMessage(messages, currentContext);
+      trailingMessages = resolveStatePosition(withState) === 'after'
+        ? appendToLastUserMessage(messages, currentContext)
+        : prependToLastUserMessage(messages, currentContext);
     }
   }
 
