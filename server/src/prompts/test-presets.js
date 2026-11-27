@@ -25,6 +25,7 @@ const {
   buildSystemPrompt, buildContextAck, composeSystemPrompt, describeContextAck,
   sessionStateBlock, resolveStatePosition, describeSessionState,
   buildCapabilitiesBlock, buildProfileMessageBlock, describeProfileMessageBlock,
+  composeMessageLeadingBlocks, composeMessageTailBlocks,
   ORIENTATION, CONTEXT_ACK,
   CAPABILITY_WORKSPACE, CAPABILITY_FILE_TOOLS, CAPABILITY_SECTIONS, SCRATCHPAD_SECTION, EXPRESSION_SECTION,
 } = require('./tessera');
@@ -677,6 +678,86 @@ check('CAPABILITY_SECTIONS exposes all 4 server-managed sub-sections for the wor
     ['workspace', 'file_tools', 'scratchpad', 'expressions']
   );
   assert.ok(CAPABILITY_SECTIONS.every(s => s.title && s.condition && s.text));
+});
+
+console.log('\nCustom blocks + cross-layer persona (DF-04)...');
+
+check('persona defaults to System layer and can move to Message layer cleanly', () => {
+  assert.strictEqual(defaultBlocks().blocks.persona.layer, 'system');
+  const preset = {
+    order: ['orientation', 'capabilities'],
+    messageOrder: ['persona', 'profile'],
+    blocks: {
+      persona: { enabled: true, text: null, layer: 'message' },
+    },
+  };
+  assert.strictEqual(validateBlocks(preset).ok, true);
+  const norm = normalizeBlocks(preset);
+  assert.ok(!norm.order.includes('persona'), 'persona removed from System order');
+  assert.ok(norm.messageOrder.includes('persona'), 'persona placed in Message order');
+
+  const sys = composeSystemPrompt(PERSONA, [], { preset, macros: { personaName: 'Vela' } });
+  assert.ok(!sys.text.includes('Vela'), 'persona absent from system prompt');
+  assert.ok(!sys.blocks.some(b => b.id === 'persona'), 'no system provenance entry');
+
+  const msg = composeMessageLeadingBlocks(PERSONA, { preset, macros: { personaName: 'Vela' } });
+  const pEntry = msg.blocks.find(b => b.id === 'persona');
+  assert.strictEqual(pEntry.included, true);
+  assert.strictEqual(pEntry.layer, 'message');
+  assert.ok(msg.texts[0].includes('# Persona: Vela') && msg.texts[0].includes(PERSONA));
+});
+
+check('custom blocks validate, expand macros (including {{expressions}}), and preserve declared order in every layer', () => {
+  const preset = {
+    order: ['orientation', 'custom_style', 'persona', 'capabilities'],
+    messageOrder: ['custom_lore_1', 'profile', 'custom_lore_2', 'custom_tail_1', 'custom_tail_2'],
+    blocks: {
+      custom_style: { custom: true, name: 'Style rules', layer: 'system', enabled: true, text: 'Speak as {{char}}.' },
+      custom_lore_1: { custom: true, name: 'Lore 1', layer: 'message', placement: 'cached', enabled: true, text: 'World: Solis. Moods: {{expressions}}.' },
+      custom_lore_2: { custom: true, name: 'Lore 2', layer: 'message', placement: 'cached', enabled: true, text: 'Era: 3rd Age.' },
+      custom_tail_1: { custom: true, name: 'Tail 1', layer: 'message', placement: 'tail', enabled: true, text: 'Stay terse, {{char}}.' },
+      custom_tail_2: { custom: true, name: 'Tail 2', layer: 'message', placement: 'tail', enabled: true, text: 'Moods: {{expressions}}.' },
+    },
+  };
+  assert.strictEqual(validateBlocks(preset).ok, true);
+
+  const sys = composeSystemPrompt(PERSONA, EXPRESSIONS, { preset, macros: { personaName: 'Vela' } });
+  assert.ok(sys.text.includes('Speak as Vela.'), 'custom system block expanded');
+  assert.ok(sys.text.indexOf('Speak as Vela.') < sys.text.indexOf('<main_persona>'), 'custom block respects order');
+  const styleProv = sys.blocks.find(b => b.id === 'custom_style');
+  assert.strictEqual(styleProv.name, 'Style rules');
+  assert.strictEqual(styleProv.source, 'preset');
+
+  const leading = composeMessageLeadingBlocks(PERSONA, {
+    preset,
+    expressionNames: ['generating', ...EXPRESSIONS],
+    macros: { personaName: 'Vela' },
+  });
+  assert.deepStrictEqual(leading.texts, ['World: Solis. Moods: neutral, happy, wry.', 'Era: 3rd Age.'], 'cached custom blocks preserve order and expand sanitized {{expressions}}');
+  assert.ok(!leading.texts.join('\n').includes('Stay terse'), 'tail custom blocks stay out of leading context');
+
+  const tail = composeMessageTailBlocks({
+    preset,
+    expressionNames: ['generating', ...EXPRESSIONS],
+    macros: { personaName: 'Vela' },
+  });
+  assert.deepStrictEqual(tail.texts, ['Stay terse, Vela.', 'Moods: neutral, happy, wry.'], 'tail custom blocks preserve order and expand {{expressions}}');
+  assert.strictEqual(tail.blocks[0].name, 'Tail 1');
+});
+
+check('custom block validation rejects missing/whitespace name, orphan order/messageOrder id, invalid layer/placement, excess count, and over-budget total', () => {
+  assert.strictEqual(validateBlocks({ blocks: { custom_x: { name: '', text: 'hi' } } }).ok, false);
+  assert.strictEqual(validateBlocks({ blocks: { custom_x: { name: '   ', text: 'hi' } } }).ok, false);
+  assert.strictEqual(validateBlocks({ order: ['orientation', 'custom_missing'], blocks: {} }).ok, false);
+  assert.strictEqual(validateBlocks({ messageOrder: ['custom_missing'], blocks: {} }).ok, false);
+  assert.strictEqual(validateBlocks({ blocks: { custom_x: { name: 'X', layer: 'bogus', text: 'hi' } } }).ok, false);
+  assert.strictEqual(validateBlocks({ blocks: { custom_x: { name: 'X', layer: 'message', placement: 'bogus', text: 'hi' } } }).ok, false);
+  const tooMany = {};
+  for (let i = 0; i < 17; i++) tooMany[`custom_b${i}`] = { name: `B${i}`, layer: 'system', text: 'x' };
+  assert.strictEqual(validateBlocks({ blocks: tooMany }).ok, false);
+  const overBudget = {};
+  for (let i = 0; i < 5; i++) overBudget[`custom_big${i}`] = { name: `Big ${i}`, layer: 'system', text: 'x'.repeat(7000) };
+  assert.strictEqual(validateBlocks({ blocks: overBudget }).ok, false, 'total preset chars cap enforced across custom blocks');
 });
 
 console.log('\n' + '='.repeat(60));
