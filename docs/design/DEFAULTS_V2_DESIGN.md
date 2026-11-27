@@ -1,6 +1,6 @@
 # Solier Defaults v2 — Starter Experience, Prompt Architecture & Workbench Editor
 
-> **Status (2026-11-26):** Complete — DF-01, DF-02, and DF-03 shipped.
+> **Status (2026-11-26):** Complete — DF-01, DF-02, DF-03, and DF-04 shipped.
 
 ---
 
@@ -75,3 +75,4 @@ What ships out of the box for a brand-new Solier user has fallen behind the rest
 | **DF-01** | Starter persona **Soli** + true `"No model set"` default (`provider: null, model: null`, CTA ending at `"...to start."`, auto-activate first model added) | Complete |
 | **DF-02** | New v2 prompt & context architecture (`tessera.js`, `presets.js`, `profile.js`, `activeFiles.js`, `chat.js`, prompt & cache tests) | Complete |
 | **DF-03** | Expanded Workbench-style Prompt Preset Editor UI in Settings → Advanced | Complete |
+| **DF-04** | Add/remove custom blocks in both layers, cross-layer `Persona prompt`, file-drop drag fix & simplified Automation copy | Complete |
