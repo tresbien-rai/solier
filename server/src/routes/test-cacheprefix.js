@@ -348,6 +348,52 @@ function renderMessages(messages) {
       );
     });
 
+    // Cross-layer persona + custom cached & tail blocks keep prefix byte-identical (DF-04)
+    const customPreset = dal.createPromptPreset(userId, {
+      name: 'custom-and-msg-persona',
+      blocks: {
+        order: ['orientation', 'custom_sys', 'capabilities'],
+        messageOrder: ['persona', 'profile', 'custom_cached', 'custom_tail'],
+        blocks: {
+          persona: { enabled: true, text: null, layer: 'message' },
+          custom_sys: { custom: true, name: 'Sys rule', layer: 'system', enabled: true, text: 'SYS_CUSTOM_RULE' },
+          custom_cached: { custom: true, name: 'World lore', layer: 'message', placement: 'cached', enabled: true, text: 'CACHED_LORE_ENTRY' },
+          custom_tail: { custom: true, name: 'Turn nudge', layer: 'message', placement: 'tail', enabled: true, text: 'TAIL_TURN_NUDGE' },
+        },
+      },
+    });
+    dal.updateConversation(bareConvo.id, userId, { presetId: customPreset.id });
+    const cReq1 = reqFor(userId, { conversationId: bareConvo.id, messages: turn1 });
+    const cRes1 = await assembleChatRequest(cReq1, resolveRequestContainers(cReq1), {
+      systemPrompt: 'You are Vela, a terse navigator.',
+      messages: turn1,
+      expressionNames: [],
+      model: 'claude-opus-5',
+    });
+    const cReq2 = reqFor(userId, { conversationId: bareConvo.id, messages: turn2 });
+    const cRes2 = await assembleChatRequest(cReq2, resolveRequestContainers(cReq2), {
+      systemPrompt: 'You are Vela, a terse navigator.',
+      messages: turn2,
+      expressionNames: [],
+      model: 'claude-opus-5',
+    });
+    check('Message-layer persona + custom cached/tail blocks assemble cleanly and keep cached prefix byte-identical', () => {
+      assert.ok(String(cRes1.system).includes('SYS_CUSTOM_RULE'), 'custom system block in system');
+      assert.ok(!String(cRes1.system).includes('<main_persona>'), 'persona moved out of system');
+      assert.ok(!String(cRes1.system).includes('TAIL_TURN_NUDGE'), 'tail block never leaks into system');
+      assert.ok(String(cRes1.messages[0].content).includes('<main_persona>'), 'persona in leading cached turn');
+      assert.ok(String(cRes1.messages[0].content).includes('CACHED_LORE_ENTRY'), 'custom cached block in leading turn');
+      assert.ok(!String(cRes1.messages[0].content).includes('TAIL_TURN_NUDGE'), 'tail block never leaks into cached prefix');
+      assert.strictEqual(cRes1.messages[1].content, 'Reference context noted.');
+      assert.ok(String(cRes1.messages[cRes1.messages.length - 1].content).includes('TAIL_TURN_NUDGE'), 'tail block on latest user turn');
+      assert.strictEqual(cRes1.system, cRes2.system, 'system unchanged across turns');
+      assert.deepStrictEqual(
+        renderMessages(cRes2.messages).slice(0, renderMessages(cRes1.messages).length - 1),
+        renderMessages(cRes1.messages).slice(0, -1),
+        'leading prefix with Message-layer persona & custom cached block stays byte-identical'
+      );
+    });
+
   } catch (err) {
     console.log(`   ✗ setup failed: ${err.message}`);
     console.log(err.stack);

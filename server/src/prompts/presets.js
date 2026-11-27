@@ -58,7 +58,13 @@ const SYSTEM_BLOCK_IDS = ['orientation', 'persona', 'capabilities'];
 const MESSAGE_BLOCK_IDS = ['profile', 'context_ack', 'state'];
 
 /** Blocks allowed to live in EITHER `order` (System) or the Message layer. */
-const CROSS_LAYER_BLOCK_IDS = ['profile'];
+const CROSS_LAYER_BLOCK_IDS = ['persona', 'profile'];
+
+/** Custom user-added block id pattern (`custom_<slug>`). */
+const CUSTOM_BLOCK_ID_RE = /^custom_[a-z0-9][a-z0-9_-]{0,31}$/;
+function isCustomBlockId(id) {
+  return typeof id === 'string' && CUSTOM_BLOCK_ID_RE.test(id);
+}
 
 /**
  * Legacy block ids from pre-DF-02 presets (expressions/scratchpad moved inside
@@ -75,6 +81,12 @@ const ALL_BLOCK_IDS = [...SYSTEM_BLOCK_IDS, ...MESSAGE_BLOCK_IDS];
 const MAX_BLOCK_CHARS = 8000;
 const MAX_PRESET_CHARS = 32000;
 const MAX_NAME_CHARS = 80;
+const MAX_CUSTOM_BLOCKS = 16;
+
+/** Default layer for each cross-layer built-in block. */
+function defaultLayerFor(id) {
+  return id === 'profile' ? 'message' : 'system';
+}
 
 /** The preset every user starts from: built-in text, built-in order. */
 function defaultBlocks() {
@@ -83,11 +95,16 @@ function defaultBlocks() {
     blocks[id] = {
       enabled: true,
       text: null,
-      ...(CROSS_LAYER_BLOCK_IDS.includes(id) ? { layer: 'message' } : {}),
+      ...(CROSS_LAYER_BLOCK_IDS.includes(id) ? { layer: defaultLayerFor(id) } : {}),
       ...(id === 'state' ? { position: 'before' } : {}),
     };
   }
-  return { version: BLOCKS_VERSION, order: [...SYSTEM_BLOCK_IDS], blocks };
+  return {
+    version: BLOCKS_VERSION,
+    order: [...SYSTEM_BLOCK_IDS],
+    messageOrder: ['profile'],
+    blocks,
+  };
 }
 
 /**
@@ -100,32 +117,16 @@ function defaultBlocks() {
  * `validateBlocks` is the strict counterpart, used on the WRITE path.
  *
  * @param {unknown} raw - parsed `prompt_presets.blocks` JSON, or null
- * @returns {{version: number, order: string[], blocks: Object}}
+ * @returns {{version: number, order: string[], messageOrder: string[], blocks: Object}}
  */
 function normalizeBlocks(raw) {
   const base = defaultBlocks();
   if (!raw || typeof raw !== 'object') return base;
 
-  const out = { version: BLOCKS_VERSION, order: [], blocks: base.blocks };
-
-  // Order: keep the user's sequence of valid system-layer blocks (plus any
-  // cross-layer block like `profile` that they explicitly placed in `order`),
-  // drop unknown/legacy ids, then append any missing required system blocks.
-  const allowedInOrder = new Set([...SYSTEM_BLOCK_IDS, ...CROSS_LAYER_BLOCK_IDS]);
-  const wanted = Array.isArray(raw.order) ? raw.order : base.order;
-  const seen = new Set();
-  for (const id of wanted) {
-    if (allowedInOrder.has(id) && !seen.has(id)) {
-      seen.add(id);
-      out.order.push(id);
-    }
-  }
-  for (const id of SYSTEM_BLOCK_IDS) {
-    if (!seen.has(id)) out.order.push(id);
-  }
-
   const rawBlocks = raw.blocks && typeof raw.blocks === 'object' ? raw.blocks : {};
-  out.blocks = {};
+  const out = { version: BLOCKS_VERSION, order: [], messageOrder: [], blocks: {} };
+
+  // 1. Built-in blocks
   for (const id of ALL_BLOCK_IDS) {
     const b = rawBlocks[id] && typeof rawBlocks[id] === 'object' ? rawBlocks[id] : {};
     const isLocked = id === 'state' || id === 'capabilities';
@@ -134,14 +135,13 @@ function normalizeBlocks(raw) {
       text: (isLocked || id === 'persona') ? null : (typeof b.text === 'string' ? b.text : null),
     };
     if (CROSS_LAYER_BLOCK_IDS.includes(id)) {
-      // Explicit layer wins; missing layer defaults to 'message' (DF-02) so
-      // legacy v1 presets whose `order` listed `profile` migrate cleanly to the
-      // Message layer instead of pinning `profile` in System.
-      entry.layer = b.layer === 'system' ? 'system' : 'message';
-      if (entry.layer === 'system' && !out.order.includes(id)) {
-        out.order.push(id);
-      } else if (entry.layer === 'message') {
-        out.order = out.order.filter((x) => x !== id);
+      // Explicit layer wins; missing layer uses the block's default (`persona`
+      // → 'system', `profile` → 'message') so legacy v1 presets keep persona in
+      // System while migrating profile cleanly to Message.
+      if (b.layer === 'system' || b.layer === 'message') {
+        entry.layer = b.layer;
+      } else {
+        entry.layer = defaultLayerFor(id);
       }
     }
     if (id === 'state') {
@@ -149,6 +149,61 @@ function normalizeBlocks(raw) {
     }
     out.blocks[id] = entry;
   }
+
+  // 2. Custom user-added blocks (DF-04)
+  const customIds = [];
+  for (const [id, rawB] of Object.entries(rawBlocks)) {
+    if (!isCustomBlockId(id)) continue;
+    if (customIds.length >= MAX_CUSTOM_BLOCKS) break;
+    if (!rawB || typeof rawB !== 'object') continue;
+    const rawName = typeof rawB.name === 'string' ? rawB.name.trim() : '';
+    const layer = rawB.layer === 'message' ? 'message' : 'system';
+    out.blocks[id] = {
+      custom: true,
+      name: (rawName || 'Custom block').slice(0, MAX_NAME_CHARS),
+      layer,
+      ...(layer === 'message' ? { placement: rawB.placement === 'tail' ? 'tail' : 'cached' } : {}),
+      enabled: rawB.enabled !== false,
+      text: typeof rawB.text === 'string' ? rawB.text : '',
+    };
+    customIds.push(id);
+  }
+
+  // 3. System layer order: every block currently assigned to System
+  const systemMembers = new Set([
+    ...SYSTEM_BLOCK_IDS.filter((id) => !CROSS_LAYER_BLOCK_IDS.includes(id) || out.blocks[id].layer === 'system'),
+    ...CROSS_LAYER_BLOCK_IDS.filter((id) => out.blocks[id].layer === 'system'),
+    ...customIds.filter((id) => out.blocks[id].layer === 'system'),
+  ]);
+  const wantedSys = Array.isArray(raw.order) ? raw.order : base.order;
+  const seenSys = new Set();
+  for (const id of wantedSys) {
+    if (systemMembers.has(id) && !seenSys.has(id)) {
+      seenSys.add(id);
+      out.order.push(id);
+    }
+  }
+  for (const id of systemMembers) {
+    if (!seenSys.has(id)) out.order.push(id);
+  }
+
+  // 4. Message layer movable order: cross-layer blocks in Message + Message custom blocks
+  const msgMembers = new Set([
+    ...CROSS_LAYER_BLOCK_IDS.filter((id) => out.blocks[id].layer === 'message'),
+    ...customIds.filter((id) => out.blocks[id].layer === 'message'),
+  ]);
+  const wantedMsg = Array.isArray(raw.messageOrder) ? raw.messageOrder : base.messageOrder;
+  const seenMsg = new Set();
+  for (const id of wantedMsg) {
+    if (msgMembers.has(id) && !seenMsg.has(id)) {
+      seenMsg.add(id);
+      out.messageOrder.push(id);
+    }
+  }
+  for (const id of msgMembers) {
+    if (!seenMsg.has(id)) out.messageOrder.push(id);
+  }
+
   return out;
 }
 
@@ -161,7 +216,17 @@ function validateBlocks(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { ok: false, error: 'Preset blocks must be an object.' };
   }
-  const allowedInOrder = new Set([...SYSTEM_BLOCK_IDS, ...CROSS_LAYER_BLOCK_IDS]);
+  const rawBlocks = raw.blocks !== undefined ? raw.blocks : {};
+  if (raw.blocks !== undefined && (!rawBlocks || typeof rawBlocks !== 'object' || Array.isArray(rawBlocks))) {
+    return { ok: false, error: '"blocks" must be an object.' };
+  }
+
+  const definedCustomIds = new Set(Object.keys(rawBlocks).filter(isCustomBlockId));
+  if (definedCustomIds.size > MAX_CUSTOM_BLOCKS) {
+    return { ok: false, error: `A preset can have at most ${MAX_CUSTOM_BLOCKS} custom blocks.` };
+  }
+
+  const allowedInOrder = new Set([...SYSTEM_BLOCK_IDS, ...CROSS_LAYER_BLOCK_IDS, ...definedCustomIds]);
   if (raw.order !== undefined) {
     if (!Array.isArray(raw.order)) return { ok: false, error: '"order" must be an array.' };
     for (const id of raw.order) {
@@ -174,30 +239,57 @@ function validateBlocks(raw) {
       return { ok: false, error: '"order" contains a duplicate block.' };
     }
   }
-  if (raw.blocks !== undefined) {
-    if (!raw.blocks || typeof raw.blocks !== 'object' || Array.isArray(raw.blocks)) {
-      return { ok: false, error: '"blocks" must be an object.' };
+
+  const allowedInMsgOrder = new Set([...CROSS_LAYER_BLOCK_IDS, ...definedCustomIds]);
+  if (raw.messageOrder !== undefined) {
+    if (!Array.isArray(raw.messageOrder)) return { ok: false, error: '"messageOrder" must be an array.' };
+    for (const id of raw.messageOrder) {
+      if (!allowedInMsgOrder.has(id)) {
+        return { ok: false, error: `Unknown block in "messageOrder": ${String(id)}` };
+      }
     }
+    if (new Set(raw.messageOrder).size !== raw.messageOrder.length) {
+      return { ok: false, error: '"messageOrder" contains a duplicate block.' };
+    }
+  }
+
+  if (raw.blocks !== undefined) {
     let total = 0;
-    for (const [id, b] of Object.entries(raw.blocks)) {
+    for (const [id, b] of Object.entries(rawBlocks)) {
       if (LEGACY_BLOCK_IDS.includes(id)) continue;
-      if (!ALL_BLOCK_IDS.includes(id)) {
+      const isCustom = isCustomBlockId(id);
+      if (!ALL_BLOCK_IDS.includes(id) && !isCustom) {
         return { ok: false, error: `Unknown block: ${id}` };
       }
-      if (!b || typeof b !== 'object') {
+      if (!b || typeof b !== 'object' || Array.isArray(b)) {
         return { ok: false, error: `Block "${id}" must be an object.` };
       }
       if (b.enabled !== undefined && typeof b.enabled !== 'boolean') {
         return { ok: false, error: `Block "${id}": "enabled" must be true or false.` };
       }
-      if (b.layer !== undefined) {
-        if (!CROSS_LAYER_BLOCK_IDS.includes(id) || (b.layer !== 'system' && b.layer !== 'message')) {
+      if (isCustom) {
+        if (typeof b.name !== 'string' || b.name.trim() === '') {
+          return { ok: false, error: `Custom block "${id}" requires a name.` };
+        }
+        if (b.name.length > MAX_NAME_CHARS) {
+          return { ok: false, error: `Custom block "${id}" name is over the ${MAX_NAME_CHARS}-character limit.` };
+        }
+        if (b.layer !== undefined && b.layer !== 'system' && b.layer !== 'message') {
           return { ok: false, error: `Block "${id}": invalid layer "${String(b.layer)}".` };
         }
-      }
-      if (b.position !== undefined) {
-        if (id !== 'state' || (b.position !== 'before' && b.position !== 'after')) {
-          return { ok: false, error: `Block "${id}": invalid position "${String(b.position)}".` };
+        if (b.placement !== undefined && b.placement !== 'cached' && b.placement !== 'tail') {
+          return { ok: false, error: `Block "${id}": invalid placement "${String(b.placement)}".` };
+        }
+      } else {
+        if (b.layer !== undefined) {
+          if (!CROSS_LAYER_BLOCK_IDS.includes(id) || (b.layer !== 'system' && b.layer !== 'message')) {
+            return { ok: false, error: `Block "${id}": invalid layer "${String(b.layer)}".` };
+          }
+        }
+        if (b.position !== undefined) {
+          if (id !== 'state' || (b.position !== 'before' && b.position !== 'after')) {
+            return { ok: false, error: `Block "${id}": invalid position "${String(b.position)}".` };
+          }
         }
       }
       if (id === 'state') {
@@ -330,6 +422,8 @@ module.exports = {
   MAX_BLOCK_CHARS,
   MAX_PRESET_CHARS,
   MAX_NAME_CHARS,
+  MAX_CUSTOM_BLOCKS,
+  isCustomBlockId,
   defaultBlocks,
   normalizeBlocks,
   validateBlocks,

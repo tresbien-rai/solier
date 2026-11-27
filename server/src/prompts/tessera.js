@@ -30,7 +30,7 @@ const RESERVED_EXPRESSIONS = new Set(['generating']);
 
 // The preset layer (AP-01) supplies the override/normalisation rules and the
 // macro expander. This module owns the TEXT; presets.js owns the SHAPE.
-const { normalizeBlocks, expandMacros, buildMacroValues } = require('./presets');
+const { normalizeBlocks, expandMacros, buildMacroValues, isCustomBlockId } = require('./presets');
 // The product name is interpolated from config rather than written here (BR-01)
 // so a rename never has to touch prompt text. It is a per-deployment constant,
 // so ORIENTATION stays byte-identical across requests and remains the shared
@@ -259,6 +259,100 @@ function buildProfileMessageBlock(options = {}) {
   return res.included ? res.text : '';
 }
 
+/** Shared evaluation for `persona` (works in System or Message layer). */
+function evaluatePersonaBlock(preset, personaPrompt, macros) {
+  const block = preset.blocks.persona;
+  if (!block || !block.enabled) {
+    return { id: 'persona', included: false, reason: 'disabled', chars: 0 };
+  }
+  const persona = typeof personaPrompt === 'string' ? personaPrompt.trim() : '';
+  if (!persona) {
+    return { id: 'persona', included: false, reason: 'no-persona-prompt', chars: 0 };
+  }
+  const span = wrapPersonaBlock(persona, macros.char);
+  return { id: 'persona', included: true, source: 'persona', chars: span.length, text: span };
+}
+
+/** Shared evaluation for a custom user-added preset block (`custom_*`). */
+function evaluateCustomBlock(id, block, macros) {
+  const name = block?.name || id;
+  if (!block || !block.enabled) {
+    return { id, name, custom: true, included: false, reason: 'disabled', chars: 0 };
+  }
+  const text = expandMacros(typeof block.text === 'string' ? block.text : '', macros).trim();
+  if (!text) {
+    return { id, name, custom: true, included: false, reason: 'empty', chars: 0 };
+  }
+  return { id, name, custom: true, included: true, source: 'preset', chars: text.length, text };
+}
+
+/**
+ * Compose Message-layer leading cached blocks (everything in `preset.messageOrder`
+ * except volatile tail custom blocks): `<user_profile>`, `<main_persona>` when
+ * moved to Message, and custom blocks with `placement === 'cached'`.
+ *
+ * @returns {{ texts: string[], blocks: Array<Object> }}
+ */
+function composeMessageLeadingBlocks(personaPrompt, options = {}) {
+  const preset = normalizeBlocks(options.preset);
+  const rawExpr = options.expressionNames !== undefined ? options.expressionNames : options.macros?.expressionNames;
+  const macros = buildMacroValues({ ...(options.macros || {}), expressionNames: sanitizeExpressionNames(rawExpr) });
+  const texts = [];
+  const blocks = [];
+
+  for (const id of preset.messageOrder) {
+    const block = preset.blocks[id];
+    if (!block) continue;
+
+    if (id === 'profile') {
+      if (block.layer === 'system') continue;
+      const res = { ...evaluateProfileBlock(preset, macros, options), layer: 'message' };
+      blocks.push(res);
+      if (res.included) texts.push(res.text);
+      continue;
+    }
+
+    if (id === 'persona') {
+      if (block.layer !== 'message') continue;
+      const res = { ...evaluatePersonaBlock(preset, personaPrompt, macros), layer: 'message' };
+      blocks.push(res);
+      if (res.included) texts.push(res.text);
+      continue;
+    }
+
+    if (isCustomBlockId(id) && block.layer === 'message' && block.placement !== 'tail') {
+      const res = { ...evaluateCustomBlock(id, block, macros), layer: 'message', placement: 'cached' };
+      blocks.push(res);
+      if (res.included) texts.push(res.text);
+    }
+  }
+  return { texts, blocks };
+}
+
+/**
+ * Compose Message-layer volatile tail custom blocks (`placement === 'tail'`),
+ * injected alongside `<current_context>` on the latest user message.
+ *
+ * @returns {{ texts: string[], blocks: Array<Object> }}
+ */
+function composeMessageTailBlocks(options = {}) {
+  const preset = normalizeBlocks(options.preset);
+  const rawExpr = options.expressionNames !== undefined ? options.expressionNames : options.macros?.expressionNames;
+  const macros = buildMacroValues({ ...(options.macros || {}), expressionNames: sanitizeExpressionNames(rawExpr) });
+  const texts = [];
+  const blocks = [];
+
+  for (const id of preset.messageOrder) {
+    const block = preset.blocks[id];
+    if (!block || !isCustomBlockId(id)) continue;
+    if (block.layer !== 'message' || block.placement !== 'tail') continue;
+    const res = { ...evaluateCustomBlock(id, block, macros), layer: 'message', placement: 'tail' };
+    blocks.push(res);
+    if (res.included) texts.push(res.text);
+  }
+  return { texts, blocks };
+}
+
 /** Provenance entry for Message-layer `profile` (AP-05). Returns null if `profile` was moved to System. */
 function describeProfileMessageBlock(options = {}) {
   if (isProfileInSystemLayer(options)) return null;
@@ -315,7 +409,6 @@ function composeSystemPrompt(personaPrompt, expressionNames, options = {}) {
   // expressionNames is forced from the sanitized list: the macro must describe
   // the persona's real expression set, never whatever a caller passed in.
   const macros = buildMacroValues({ ...(options.macros || {}), expressionNames: names });
-  const persona = typeof personaPrompt === 'string' ? personaPrompt.trim() : '';
 
   const parts = [];
   const blocks = [];
@@ -347,19 +440,24 @@ function composeSystemPrompt(personaPrompt, expressionNames, options = {}) {
       continue;
     }
 
-    if (!block || !block.enabled) {
-      skip(id, 'disabled');
+    if (id === 'persona') {
+      if (block?.layer === 'message') continue;
+      const res = evaluatePersonaBlock(preset, personaPrompt, macros);
+      blocks.push({ ...res, layer: 'system' });
+      if (res.included) parts.push(res.text);
       continue;
     }
 
-    if (id === 'persona') {
-      if (!persona) {
-        skip(id, 'no-persona-prompt');
-        continue;
-      }
-      const span = wrapPersonaBlock(persona, macros.char);
-      parts.push(span);
-      blocks.push({ id, layer: 'system', included: true, source: 'persona', chars: span.length, text: span });
+    if (isCustomBlockId(id)) {
+      if (!block || block.layer !== 'system') continue;
+      const res = evaluateCustomBlock(id, block, macros);
+      blocks.push({ ...res, layer: 'system' });
+      if (res.included) parts.push(res.text);
+      continue;
+    }
+
+    if (!block || !block.enabled) {
+      skip(id, 'disabled');
       continue;
     }
 
@@ -475,6 +573,8 @@ module.exports = {
   buildCapabilitiesBlock,
   buildProfileMessageBlock,
   describeProfileMessageBlock,
+  composeMessageLeadingBlocks,
+  composeMessageTailBlocks,
   isProfileInSystemLayer,
   buildContextAck,
   describeContextAck,

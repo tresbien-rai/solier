@@ -30,6 +30,7 @@ const {
   validateName,
   MAX_BLOCK_CHARS,
   MAX_PRESET_CHARS,
+  MAX_CUSTOM_BLOCKS,
   SYSTEM_BLOCK_IDS,
   MESSAGE_BLOCK_IDS,
   CROSS_LAYER_BLOCK_IDS,
@@ -66,7 +67,12 @@ router.get('/defaults', asyncHandler(async (req, res) => {
     crossLayerBlockIds: CROSS_LAYER_BLOCK_IDS,
     defaults: defaultBlocks(),
     macros: MACRO_REFERENCE,
-    limits: { blockChars: MAX_BLOCK_CHARS, presetChars: MAX_PRESET_CHARS, presets: MAX_PRESETS },
+    limits: {
+      blockChars: MAX_BLOCK_CHARS,
+      presetChars: MAX_PRESET_CHARS,
+      presets: MAX_PRESETS,
+      customBlocks: MAX_CUSTOM_BLOCKS,
+    },
   });
 }));
 

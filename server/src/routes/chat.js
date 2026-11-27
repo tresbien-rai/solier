@@ -23,7 +23,7 @@ const config = require('../config');
 const {
   buildSystemPrompt, buildContextAck, composeSystemPrompt, describeContextAck,
   sessionStateBlock, resolveStatePosition, describeSessionState,
-  buildProfileMessageBlock, describeProfileMessageBlock,
+  composeMessageLeadingBlocks, composeMessageTailBlocks,
 } = require('../prompts/tessera');
 const { buildSessionState, hasSessionContext } = require('../prompts/sessionState');
 const { renderProfile, resolveUserName, hasProfileData } = require('../prompts/profile');
@@ -232,9 +232,8 @@ async function resolveRequestContext(req, containers = null, toolsEnabled = fals
  * @returns {{ system: string|undefined, messages: Array }}
  */
 function assembleProviderInput(requestContext, systemPrompt, messages = [], expressionNames = [], scratchpadEnabled = false, promptOptions = {}) {
-  const profileBlock = buildProfileMessageBlock(promptOptions);
-  const leadingParts = [];
-  if (profileBlock) leadingParts.push(profileBlock);
+  const leading = composeMessageLeadingBlocks(systemPrompt, { ...promptOptions, expressionNames });
+  const leadingParts = [...leading.texts];
   if (requestContext?.text) leadingParts.push(requestContext.text);
 
   const ack = buildContextAck(promptOptions);
@@ -315,6 +314,7 @@ async function assembleChatRequest(req, containers, { systemPrompt, messages, ex
 
   const withState = {
     ...promptOptions,
+    expressionNames,
     toolsEnabled,
     hasContainer,
     bareChat: !includeCurrentContext,
@@ -322,6 +322,7 @@ async function assembleChatRequest(req, containers, { systemPrompt, messages, ex
   };
 
   let trailingMessages = messages;
+  const tailSegments = [];
   if (includeCurrentContext) {
     const contextParts = [];
     const sBlock = sessionStateBlock(withState);
@@ -336,11 +337,17 @@ async function assembleChatRequest(req, containers, { systemPrompt, messages, ex
     }
 
     if (contextParts.length > 0) {
-      const currentContext = `<current_context>\n${contextParts.join('\n\n')}\n</current_context>`;
-      trailingMessages = resolveStatePosition(withState) === 'after'
-        ? appendToLastUserMessage(messages, currentContext)
-        : prependToLastUserMessage(messages, currentContext);
+      tailSegments.push(`<current_context>\n${contextParts.join('\n\n')}\n</current_context>`);
     }
+  }
+  const customTail = composeMessageTailBlocks(withState);
+  if (customTail.texts.length > 0) tailSegments.push(...customTail.texts);
+
+  if (tailSegments.length > 0) {
+    const tailPayload = tailSegments.join('\n\n');
+    trailingMessages = resolveStatePosition(withState) === 'after'
+      ? appendToLastUserMessage(messages, tailPayload)
+      : prependToLastUserMessage(messages, tailPayload);
   }
 
   const { system, messages: assembled } =
@@ -1123,13 +1130,15 @@ router.post('/preview', asyncHandler(async (req, res) => {
     ...promptOptions,
     scratchpad: scratchpadEnabled,
   }).blocks;
-  const profileMsgBlock = describeProfileMessageBlock(promptOptions);
-  if (profileMsgBlock) promptBlocks.push(profileMsgBlock);
-  const hasLeadingContext = Boolean(profileMsgBlock?.included || requestContext?.text);
+  const leadingMsg = composeMessageLeadingBlocks(systemPrompt, { ...promptOptions, expressionNames });
+  promptBlocks.push(...leadingMsg.blocks);
+  const hasLeadingContext = Boolean(leadingMsg.texts.length > 0 || requestContext?.text);
   promptBlocks.push(describeContextAck(promptOptions, hasLeadingContext));
   // Message-layer too since PC-01, so it is described alongside the ack rather
   // than appearing in the system-prompt list composeSystemPrompt returns.
   promptBlocks.push(describeSessionState(promptOptions));
+  const tailMsg = composeMessageTailBlocks({ ...promptOptions, expressionNames });
+  promptBlocks.push(...tailMsg.blocks);
 
   res.json({
     provider,

@@ -208,18 +208,23 @@ export function renderPresetList() {
     host.innerHTML = rows.join('');
 }
 
-/** "2 blocks edited · 1 off", or "No changes from the built-in yet". */
+/** "2 blocks edited · +1 custom · reordered", or "No changes from the built-in yet". */
 function describeOverrides(preset) {
     const blocks = (preset.blocks && preset.blocks.blocks) || {};
     const order = (preset.blocks && preset.blocks.order) || [];
-    const edited = Object.values(blocks).filter(b => typeof b.text === 'string').length;
+    const customCount = Object.keys(blocks).filter(id => id.startsWith('custom_')).length;
+    const edited = Object.entries(blocks)
+        .filter(([id, b]) => !id.startsWith('custom_') && typeof b.text === 'string').length;
     const disabled = Object.values(blocks).filter(b => b.enabled === false).length;
     const defaultOrder = presetDefaults?.systemBlockIds || ['orientation', 'persona', 'capabilities'];
+    const builtInOrder = order.filter(id => !id.startsWith('custom_'));
     const reordered = blocks.profile?.layer === 'system'
+        || blocks.persona?.layer === 'message'
         || blocks.state?.position === 'after'
-        || (order.length > 0 && order.join(',') !== defaultOrder.join(','));
+        || (builtInOrder.length > 0 && builtInOrder.join(',') !== defaultOrder.join(','));
     const bits = [];
     if (edited) bits.push(`${edited} block${edited === 1 ? '' : 's'} edited`);
+    if (customCount) bits.push(`+${customCount} custom`);
     if (disabled) bits.push(`${disabled} off`);
     if (reordered) bits.push('reordered');
     return bits.length ? escapeHtml(bits.join(' · ')) : 'No changes from the built-in yet';
@@ -410,7 +415,7 @@ const BLOCK_INFO = {
     },
     context_ack: {
         label: 'Context acknowledgement',
-        description: "Voice-neutral synthetic assistant reply after leading context (Your profile and/or Workspace/Project KB).",
+        description: 'Voice-neutral synthetic assistant reply after leading cached context (profile, persona, custom blocks, and/or Workspace/Project KB).',
         conditional: 'Sent only when leading context is injected.',
     },
     state: {
@@ -515,6 +520,27 @@ function editingBlocks() {
     return preset && preset.blocks ? preset.blocks : null;
 }
 
+/** Whether a block id belongs to a user-added custom block (`custom_*`). */
+function isCustomId(id) {
+    return typeof id === 'string' && id.startsWith('custom_');
+}
+
+/** Generate a unique custom block id matching server `CUSTOM_BLOCK_ID_RE`. */
+function generateCustomBlockId(blocksObj, name) {
+    const slug = String(name || 'block')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 18) || 'block';
+    const base = `custom_${slug}`;
+    if (!blocksObj[base]) return base;
+    for (let n = 2; n < 999; n++) {
+        const candidate = `${base}_${n}`.slice(0, 38);
+        if (!blocksObj[candidate]) return candidate;
+    }
+    return `custom_${Date.now().toString(36)}`;
+}
+
 /** Normalized built-in text for an editable block (LF line endings). */
 function builtInText(id) {
     return String(presetDefaults?.blocks?.[id] || '').replace(/\r\n/g, '\n');
@@ -522,12 +548,26 @@ function builtInText(id) {
 
 /** Effective text shown inside an editable textarea (override or built-in). */
 function effectiveBlockText(id, block) {
+    if (isCustomId(id)) return typeof block?.text === 'string' ? block.text : '';
     return typeof block?.text === 'string' ? block.text : builtInText(id);
 }
 
-/** Whether an editable block carries a custom override distinct from built-in. */
+/** Whether a built-in editable block carries a custom override distinct from built-in. */
 function isBlockOverridden(id, block) {
+    if (isCustomId(id)) return false;
     return typeof block?.text === 'string' && block.text !== builtInText(id);
+}
+
+/** Ensure `blocks.messageOrder` exists on presets loaded before DF-04 normalization. */
+function ensureMessageOrder(blocks) {
+    if (!Array.isArray(blocks.messageOrder)) {
+        const crossLayerIds = presetDefaults?.crossLayerBlockIds || ['persona', 'profile'];
+        blocks.messageOrder = [
+            ...crossLayerIds.filter(id => blocks.blocks[id]?.layer === 'message'),
+            ...Object.keys(blocks.blocks).filter(id => isCustomId(id) && blocks.blocks[id]?.layer === 'message'),
+        ];
+    }
+    return blocks.messageOrder;
 }
 
 export function renderPresetEditor() {
@@ -536,16 +576,51 @@ export function renderPresetEditor() {
     if (!elements.presetEditor || !preset || !blocks) return;
 
     const systemIds = presetDefaults.systemBlockIds;
-    const crossLayerIds = presetDefaults.crossLayerBlockIds || [];
-    const systemOrder = blocks.order.filter(
-        id => systemIds.includes(id) || (crossLayerIds.includes(id) && blocks.blocks[id]?.layer === 'system')
-    );
-    const profileInMessage = !systemOrder.includes('profile');
+    const crossLayerIds = presetDefaults.crossLayerBlockIds || ['persona', 'profile'];
+    const msgOrder = ensureMessageOrder(blocks);
+
+    const systemOrder = blocks.order.filter(id => {
+        const b = blocks.blocks[id];
+        if (!b) return false;
+        if (isCustomId(id)) return b.layer !== 'message';
+        if (crossLayerIds.includes(id)) return b.layer === 'system';
+        return systemIds.includes(id);
+    });
+
+    const messageCachedOrder = msgOrder.filter(id => {
+        const b = blocks.blocks[id];
+        if (!b || b.layer !== 'message') return false;
+        if (isCustomId(id)) return b.placement !== 'tail';
+        return crossLayerIds.includes(id);
+    });
+
+    const messageTailOrder = msgOrder.filter(id => {
+        const b = blocks.blocks[id];
+        return Boolean(b && isCustomId(id) && b.layer === 'message' && b.placement === 'tail');
+    });
+
+    const customCount = Object.keys(blocks.blocks).filter(isCustomId).length;
+    const maxCustom = presetDefaults.limits?.customBlocks || 16;
+    const atCustomCap = customCount >= maxCustom;
     const statePosition = blocks.blocks.state?.position === 'after' ? 'after' : 'before';
 
+    const volatileTailCustomHTML = messageTailOrder.map((id, i) => blockCardHTML(id, blocks.blocks[id], {
+        layer: 'message',
+        placement: 'tail',
+        index: i,
+        count: messageTailOrder.length,
+        draggable: true,
+        crossLayer: true,
+    })).join('');
+
+    // Match the exact wire order: when `state.position === 'before'`, both
+    // Current context and tail custom blocks prepend ahead of Latest user message;
+    // when `'after'`, they append after Latest user message.
+    const stateCardHTML = blockCardHTML('state', blocks.blocks.state, { layer: 'message', draggable: false });
+    const latestCardHTML = infoCardHTML(INFO_CARDS.latest_user);
     const volatileCardsHTML = statePosition === 'after'
-        ? infoCardHTML(INFO_CARDS.latest_user) + blockCardHTML('state', blocks.blocks.state, { layer: 'message', draggable: false })
-        : blockCardHTML('state', blocks.blocks.state, { layer: 'message', draggable: false }) + infoCardHTML(INFO_CARDS.latest_user);
+        ? latestCardHTML + stateCardHTML + volatileTailCustomHTML
+        : stateCardHTML + volatileTailCustomHTML + latestCardHTML;
 
     elements.presetEditor.innerHTML = `
         <div class="preset-editor-head">
@@ -560,12 +635,15 @@ export function renderPresetEditor() {
             </span>
         </div>
         <h4 class="preset-editor-title">${escapeHtml(preset.name)}</h4>
-        <p class="section-note">Editable blocks start pre-filled with the built-in text and follow future updates until changed. Click any block to inspect or edit it; drag or use ↑ ↓ to reorder.</p>
+        <p class="section-note">Editable built-in blocks start pre-filled and follow updates until changed. Add custom blocks in either layer, drag or use ↑ ↓ to reorder, and move Persona, Profile, or custom blocks across layers.</p>
 
         <section class="preset-layer" aria-labelledby="presetLayerSystemHeading">
             <div class="preset-layer-head">
-                <span class="preset-layer-title" id="presetLayerSystemHeading">System Layer</span>
-                <span class="preset-layer-hint">Cached prefix sent ahead of messages · drag to reorder</span>
+                <div class="preset-layer-meta">
+                    <span class="preset-layer-title" id="presetLayerSystemHeading">System Layer</span>
+                    <span class="preset-layer-hint">Cached prefix sent ahead of messages · drag to reorder</span>
+                </div>
+                <button type="button" class="preset-action preset-action-xs" id="presetAddSystemBtn" aria-label="Add block to System Layer"${atCustomCap ? ' disabled' : ''}>+ Add block</button>
             </div>
             <div class="preset-blocks" id="presetSystemBlocks" data-drop-layer="system">
                 ${systemOrder.map((id, i) => blockCardHTML(id, blocks.blocks[id], {
@@ -573,22 +651,28 @@ export function renderPresetEditor() {
                     index: i,
                     count: systemOrder.length,
                     draggable: true,
-                    crossLayer: crossLayerIds.includes(id),
+                    crossLayer: isCustomId(id) || crossLayerIds.includes(id),
                 })).join('')}
             </div>
         </section>
 
         <section class="preset-layer" aria-labelledby="presetLayerMessageHeading">
             <div class="preset-layer-head">
-                <span class="preset-layer-title" id="presetLayerMessageHeading">Message Layer</span>
-                <span class="preset-layer-hint">Leading cached context, native chat turns, and volatile per-turn tail</span>
+                <div class="preset-layer-meta">
+                    <span class="preset-layer-title" id="presetLayerMessageHeading">Message Layer</span>
+                    <span class="preset-layer-hint">Leading cached context, native chat turns, and volatile per-turn tail</span>
+                </div>
+                <button type="button" class="preset-action preset-action-xs" id="presetAddMessageBtn" aria-label="Add block to Message Layer"${atCustomCap ? ' disabled' : ''}>+ Add block</button>
             </div>
             <div class="preset-blocks" id="presetMessageCachedBlocks" data-drop-layer="message">
-                ${profileInMessage ? blockCardHTML('profile', blocks.blocks.profile, {
+                ${messageCachedOrder.map((id, i) => blockCardHTML(id, blocks.blocks[id], {
                     layer: 'message',
+                    placement: 'cached',
+                    index: i,
+                    count: messageCachedOrder.length,
                     draggable: true,
                     crossLayer: true,
-                }) : ''}
+                })).join('')}
                 ${infoCardHTML(INFO_CARDS.workspace_kb)}
                 ${blockCardHTML('context_ack', blocks.blocks.context_ack, { layer: 'message', draggable: false })}
                 ${infoCardHTML(INFO_CARDS.history)}
@@ -598,7 +682,7 @@ export function renderPresetEditor() {
                 <span>Cache boundary · volatile per-turn tail below</span>
             </div>
 
-            <div class="preset-blocks" id="presetMessageVolatileBlocks">
+            <div class="preset-blocks" id="presetMessageVolatileBlocks" data-drop-layer="tail">
                 ${volatileCardsHTML}
             </div>
         </section>
@@ -630,40 +714,144 @@ export function renderPresetEditor() {
         flushPresetSave();
         renderPromptInspector(document.getElementById('presetInspector'), { presetId: editingPresetId });
     });
+    elements.presetEditor.querySelector('#presetAddSystemBtn')
+        ?.addEventListener('click', () => addCustomBlock('system'));
+    elements.presetEditor.querySelector('#presetAddMessageBtn')
+        ?.addEventListener('click', () => addCustomBlock('message'));
     wireEditorEvents();
     syncToggleAllButton();
 }
 
+/** Add a user-defined custom block to System or Message layer. */
+async function addCustomBlock(layer) {
+    const targetPresetId = editingPresetId;
+    const initialBlocks = editingBlocks();
+    if (!targetPresetId || !initialBlocks) return;
+    const maxCustom = presetDefaults?.limits?.customBlocks || 16;
+    const currentCustom = Object.keys(initialBlocks.blocks).filter(isCustomId).length;
+    if (currentCustom >= maxCustom) {
+        showToast(`You can add up to ${maxCustom} custom blocks per preset.`, { type: 'warning' });
+        return;
+    }
+    const name = await promptName({
+        title: `Add block to ${layer === 'system' ? 'System Layer' : 'Message Layer'}`,
+        label: 'Block name',
+        placeholder: 'e.g. Style rules, Lore notes, Final reminder',
+        confirmLabel: 'Add block',
+    });
+    if (!name || editingPresetId !== targetPresetId) return;
+    const blocks = editingBlocks();
+    if (!blocks) return;
+
+    const cleanName = name.trim().slice(0, 80);
+    if (!cleanName) return;
+    const id = generateCustomBlockId(blocks.blocks, cleanName);
+    blocks.blocks[id] = {
+        custom: true,
+        name: cleanName,
+        layer,
+        ...(layer === 'message' ? { placement: 'cached' } : {}),
+        enabled: true,
+        text: '',
+    };
+    if (layer === 'system') {
+        blocks.order.push(id);
+    } else {
+        ensureMessageOrder(blocks).push(id);
+    }
+    expandedBlockIds.add(id);
+    renderPresetEditor();
+    const ta = document.getElementById(`presetText_${id}`);
+    if (ta) ta.focus();
+    queuePresetSave();
+}
+
+/** Remove a user-added custom block from the preset. */
+async function removeCustomBlock(id) {
+    const targetPresetId = editingPresetId;
+    const initialBlocks = editingBlocks();
+    const initialBlock = initialBlocks?.blocks?.[id];
+    if (!targetPresetId || !initialBlocks || !initialBlock || !isCustomId(id)) return;
+    const removedName = initialBlock.name;
+    const hasText = typeof initialBlock.text === 'string' && initialBlock.text.trim().length > 0;
+    if (hasText) {
+        const ok = await confirmDialog({
+            title: `Remove “${removedName}”?`,
+            body: 'This custom block and its text will be removed from this preset.',
+            confirmLabel: 'Remove',
+            danger: true,
+        });
+        if (!ok || editingPresetId !== targetPresetId) return;
+    }
+    const blocks = editingBlocks();
+    if (!blocks || !blocks.blocks[id]) return;
+    delete blocks.blocks[id];
+    blocks.order = blocks.order.filter(x => x !== id);
+    if (Array.isArray(blocks.messageOrder)) {
+        blocks.messageOrder = blocks.messageOrder.filter(x => x !== id);
+    }
+    expandedBlockIds.delete(id);
+    renderPresetEditor();
+    queuePresetSave();
+    showToast(`Removed “${removedName}”.`);
+}
+
 /** Role + cache metadata badges for each preset block id. */
-function blockMetaTags(id, layer) {
+function blockMetaTags(id, layer, placement = 'cached') {
     if (layer === 'system') {
         return { role: 'System', roleClass: 'role-system', cache: 'Cached', cacheClass: 'cache-cached' };
     }
     if (id === 'context_ack') {
         return { role: 'Assistant', roleClass: 'role-assistant', cache: 'Cached', cacheClass: 'cache-cached' };
     }
-    if (id === 'state') {
+    if (id === 'state' || placement === 'tail') {
         return { role: 'User', roleClass: 'role-user', cache: 'Volatile', cacheClass: 'cache-volatile' };
     }
     return { role: 'User', roleClass: 'role-user', cache: 'Cached', cacheClass: 'cache-cached' };
 }
 
 /** One preset block card (accessible custom disclosure + sibling action bar). */
-function blockCardHTML(id, block, { layer = 'system', index = 0, count = 1, draggable = false, crossLayer = false } = {}) {
+function blockCardHTML(id, block, { layer = 'system', placement = 'cached', index = 0, count = 1, draggable = false, crossLayer = false } = {}) {
     block = block || { enabled: true, text: null };
-    const info = BLOCK_INFO[id] || { label: id, description: '' };
-    const editable = !info.positionOnly;
-    const overridden = editable && isBlockOverridden(id, block);
+    const isCustom = isCustomId(id);
+    const info = isCustom
+        ? {
+            label: block.name || 'Custom block',
+            description: layer === 'system'
+                ? 'Custom block injected in the System Layer at this position. Supports macros like {{char}} and {{user}}.'
+                : (placement === 'tail'
+                    ? 'Custom volatile block attached to your latest user message (below the cache boundary). Supports macros.'
+                    : 'Custom block injected in the leading cached context ahead of Conversation history. Supports macros.'),
+        }
+        : (BLOCK_INFO[id] || { label: id, description: '' });
+    const editable = isCustom || !info.positionOnly;
+    const overridden = !isCustom && editable && isBlockOverridden(id, block);
     const currentText = editable ? effectiveBlockText(id, block) : '';
-    const stateLabel = block.enabled === false ? 'Off' : (overridden ? 'Edited' : 'Built-in');
-    const stateClass = block.enabled === false ? 'state-off' : (overridden ? 'state-edited' : 'state-builtin');
-    const tags = blockMetaTags(id, layer);
+    const stateLabel = block.enabled === false ? 'Off' : (isCustom ? 'Custom' : (overridden ? 'Edited' : 'Built-in'));
+    const stateClass = block.enabled === false ? 'state-off' : ((isCustom || overridden) ? 'state-edited' : 'state-builtin');
+    const tags = blockMetaTags(id, layer, placement);
     const isOpen = expandedBlockIds.has(id);
     const bodyId = `presetBlockBody_${id}`;
     const statePosition = block.position === 'after' ? 'after' : 'before';
+    const showReorder = draggable && count > 1;
 
-    const bodyContent = editable
+    const bodyContent = isCustom
         ? `
+            <div class="preset-block-subbar">
+                <label class="preset-name-field">
+                    <span>Name</span>
+                    <input type="text" class="preset-block-name-input" data-block-name
+                           maxlength="80" value="${escapeHtml(block.name || '')}"
+                           aria-label="Custom block name">
+                </label>
+                <button type="button" class="preset-action preset-action-xs danger-quiet" data-action="remove">Remove block</button>
+            </div>
+            <textarea id="presetText_${escapeHtml(id)}" class="preset-block-text" data-block-text rows="5"
+                      maxlength="${presetDefaults.limits.blockChars}"
+                      placeholder="Write instructions or context for this block (macros like {{char}} and {{user}} work here)…"
+                      aria-label="${escapeHtml(info.label)} prompt text">${escapeHtml(currentText)}</textarea>`
+        : editable
+            ? `
             <div class="preset-block-subbar">
                 <span class="preset-block-sync" data-sync-note>${overridden ? 'Custom override for this preset' : 'Matches built-in text (follows updates)'}</span>
                 <button type="button" class="preset-action preset-action-xs" data-action="reset"${overridden ? '' : ' disabled'}>Reset to built-in</button>
@@ -672,35 +860,40 @@ function blockCardHTML(id, block, { layer = 'system', index = 0, count = 1, drag
                       maxlength="${presetDefaults.limits.blockChars}"
                       aria-label="${escapeHtml(info.label)} prompt text">${escapeHtml(currentText)}</textarea>
             <p class="preset-block-warn" data-warn hidden></p>`
-        : id === 'capabilities'
-            ? capabilitiesSublistHTML()
-            : id === 'persona'
-                ? personaAnchorBodyHTML()
-                : id === 'state'
-                    ? statePositionBodyHTML(statePosition)
-                    : '';
+            : id === 'capabilities'
+                ? capabilitiesSublistHTML()
+                : id === 'persona'
+                    ? personaAnchorBodyHTML()
+                    : id === 'state'
+                        ? statePositionBodyHTML(statePosition)
+                        : '';
 
     return `
     <div class="preset-block${block.enabled === false ? ' is-off' : ''}${isOpen ? ' is-open' : ''}"
-         data-block-id="${escapeHtml(id)}" data-layer="${escapeHtml(layer)}"${draggable ? ' draggable="true"' : ''}>
+         data-block-id="${escapeHtml(id)}" data-layer="${escapeHtml(layer)}" data-placement="${escapeHtml(placement)}"${draggable ? ' draggable="true"' : ''}>
         <div class="preset-block-head">
             ${draggable ? '<span class="preset-block-grip" aria-hidden="true" title="Drag to reorder">⋮⋮</span>' : ''}
             <button type="button" class="preset-block-trigger" data-action="expand"
                     aria-expanded="${isOpen ? 'true' : 'false'}" aria-controls="${escapeHtml(bodyId)}">
                 <span class="preset-block-chevron" aria-hidden="true"></span>
-                <span class="preset-block-title">${escapeHtml(info.label)}</span>
+                <span class="preset-block-title" data-title>${escapeHtml(info.label)}</span>
                 <span class="preset-pill-tag ${tags.roleClass}">${tags.role}</span>
                 <span class="preset-pill-tag ${tags.cacheClass}">${tags.cache}</span>
                 ${!info.locked ? `<span class="preset-pill-tag ${stateClass}" data-state>${stateLabel}</span>` : ''}
             </button>
             <div class="preset-block-actions">
                 ${editable ? `<span class="preset-char-count" data-char-count>${currentText.length.toLocaleString()} ch</span>` : ''}
+                ${isCustom && layer === 'message' ? `
+                    <div class="segmented preset-pos-seg" role="group" aria-label="Message layer placement">
+                        <button type="button" data-action="custom-placement" data-placement="cached" class="${placement === 'cached' ? 'active' : ''}" aria-pressed="${placement === 'cached'}" title="Leading cached prefix before history">Cached</button>
+                        <button type="button" data-action="custom-placement" data-placement="tail" class="${placement === 'tail' ? 'active' : ''}" aria-pressed="${placement === 'tail'}" title="Volatile tail with latest user message">Tail</button>
+                    </div>` : ''}
                 ${crossLayer ? `
                     <button type="button" class="preset-action preset-action-xs" data-action="toggle-layer"
                             title="${layer === 'system' ? 'Move to Message Layer (cached prefix)' : 'Move to System Layer'}">
                         ${layer === 'system' ? '→ Message' : '↑ System'}
                     </button>` : ''}
-                ${layer === 'system' ? `
+                ${showReorder ? `
                     <button type="button" class="preset-action preset-action-icon" data-action="move-up" aria-label="Move ${escapeHtml(info.label)} up"${index === 0 ? ' disabled' : ''}>↑</button>
                     <button type="button" class="preset-action preset-action-icon" data-action="move-down" aria-label="Move ${escapeHtml(info.label)} down"${index === count - 1 ? ' disabled' : ''}>↓</button>` : ''}
                 ${id === 'state' ? `
@@ -856,19 +1049,46 @@ function wireEditorEvents() {
 
         if (!id) return; // informational data card — expand/collapse only
 
+        const nameInput = card.querySelector('[data-block-name]');
+        if (nameInput) {
+            nameInput.addEventListener('input', () => {
+                const blocks = editingBlocks();
+                if (!blocks || !blocks.blocks[id]) return;
+                const clean = nameInput.value.trim().slice(0, 80);
+                blocks.blocks[id].name = clean || 'Custom block';
+                const titleEl = card.querySelector('[data-title]');
+                if (titleEl) titleEl.textContent = blocks.blocks[id].name;
+                queuePresetSave();
+            });
+            nameInput.addEventListener('blur', () => {
+                const blocks = editingBlocks();
+                if (!blocks || !blocks.blocks[id]) return;
+                if (nameInput.value.trim() === '') {
+                    nameInput.value = blocks.blocks[id].name;
+                }
+            });
+        }
+
         const textarea = card.querySelector('[data-block-text]');
         if (textarea) {
             textarea.addEventListener('input', () => {
                 const blocks = editingBlocks();
-                if (!blocks) return;
+                if (!blocks || !blocks.blocks[id]) return;
                 const val = textarea.value;
-                // Matching built-in text verbatim stores null so the block
-                // continues following future built-in updates (Decision D2).
-                blocks.blocks[id].text = val === builtInText(id) ? null : val;
+                if (isCustomId(id)) {
+                    blocks.blocks[id].text = val;
+                } else {
+                    // Matching built-in text verbatim stores null so the block
+                    // continues following future built-in updates (Decision D2).
+                    blocks.blocks[id].text = val === builtInText(id) ? null : val;
+                }
                 refreshBlockChrome(card, id);
                 queuePresetSave();
             });
         }
+
+        const removeBtn = card.querySelector('[data-action="remove"]');
+        if (removeBtn) removeBtn.addEventListener('click', () => removeCustomBlock(id));
 
         const toggle = card.querySelector('[data-action="toggle"]');
         if (toggle) toggle.addEventListener('change', (e) => {
@@ -899,10 +1119,23 @@ function wireEditorEvents() {
             });
         }
 
+        card.querySelectorAll('[data-action="custom-placement"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const blocks = editingBlocks();
+                if (!blocks || !blocks.blocks[id]) return;
+                const placement = btn.dataset.placement === 'tail' ? 'tail' : 'cached';
+                if (blocks.blocks[id].placement === placement) return;
+                blocks.blocks[id].placement = placement;
+                renderPresetEditor();
+                restoreEditorFocus(`.preset-block[data-block-id="${CSS.escape(id)}"] [data-action="custom-placement"][data-placement="${placement}"]`);
+                queuePresetSave();
+            });
+        });
+
         const up = card.querySelector('[data-action="move-up"]');
         const down = card.querySelector('[data-action="move-down"]');
-        if (up) up.addEventListener('click', () => moveBlock(id, -1, 'move-up'));
-        if (down) down.addEventListener('click', () => moveBlock(id, 1, 'move-down'));
+        if (up) up.addEventListener('click', () => moveBlock(id, -1, card.dataset.layer, card.dataset.placement, 'move-up'));
+        if (down) down.addEventListener('click', () => moveBlock(id, 1, card.dataset.layer, card.dataset.placement, 'move-down'));
 
         card.querySelectorAll('[data-action="state-pos"]').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -935,14 +1168,15 @@ function restoreEditorFocus(selector, fallbackSelector) {
 function refreshBlockChrome(card, id) {
     const block = editingBlocks()?.blocks?.[id];
     if (!block) return;
+    const isCustom = isCustomId(id);
     const info = BLOCK_INFO[id] || {};
-    const editable = !info.positionOnly;
-    const overridden = editable && isBlockOverridden(id, block);
+    const editable = isCustom || !info.positionOnly;
+    const overridden = !isCustom && editable && isBlockOverridden(id, block);
     const pill = card.querySelector('[data-state]');
     if (pill) {
-        pill.textContent = block.enabled === false ? 'Off' : (overridden ? 'Edited' : 'Built-in');
+        pill.textContent = block.enabled === false ? 'Off' : (isCustom ? 'Custom' : (overridden ? 'Edited' : 'Built-in'));
         pill.classList.remove('state-off', 'state-edited', 'state-builtin');
-        pill.classList.add(block.enabled === false ? 'state-off' : (overridden ? 'state-edited' : 'state-builtin'));
+        pill.classList.add(block.enabled === false ? 'state-off' : ((isCustom || overridden) ? 'state-edited' : 'state-builtin'));
     }
     const countEl = card.querySelector('[data-char-count]');
     if (countEl && editable) {
@@ -958,15 +1192,33 @@ function refreshBlockChrome(card, id) {
     if (reset) reset.disabled = !overridden;
 }
 
-/** Move a block within the system-layer order and re-render. */
-function moveBlock(id, delta, focusAction) {
+/** Move a block within its current list (System, Message cached, or Message tail). */
+function moveBlock(id, delta, layer, placement, focusAction) {
     const blocks = editingBlocks();
     if (!blocks) return;
-    const order = blocks.order;
-    const from = order.indexOf(id);
-    const to = from + delta;
-    if (from < 0 || to < 0 || to >= order.length) return;
-    order.splice(to, 0, order.splice(from, 1)[0]);
+    if (layer === 'system') {
+        const order = blocks.order;
+        const from = order.indexOf(id);
+        const to = from + delta;
+        if (from < 0 || to < 0 || to >= order.length) return;
+        order.splice(to, 0, order.splice(from, 1)[0]);
+    } else {
+        const msgOrder = ensureMessageOrder(blocks);
+        const group = msgOrder.filter(x => {
+            const b = blocks.blocks[x];
+            if (!b || b.layer !== 'message') return false;
+            return placement === 'tail' ? (isCustomId(x) && b.placement === 'tail') : (!isCustomId(x) || b.placement !== 'tail');
+        });
+        const gFrom = group.indexOf(id);
+        const gTo = gFrom + delta;
+        if (gFrom < 0 || gTo < 0 || gTo >= group.length) return;
+        const swapWith = group[gTo];
+        const iFrom = msgOrder.indexOf(id);
+        const iTo = msgOrder.indexOf(swapWith);
+        if (iFrom < 0 || iTo < 0) return;
+        msgOrder[iFrom] = swapWith;
+        msgOrder[iTo] = id;
+    }
     renderPresetEditor();
     if (focusAction) {
         const escaped = CSS.escape(id);
@@ -979,17 +1231,31 @@ function moveBlock(id, delta, focusAction) {
     queuePresetSave();
 }
 
-/** Move a cross-layer block (`profile`) between System and Message layers. */
+/** Move a cross-layer block (`persona`, `profile`, or custom) between System and Message layers. */
 function moveBlockLayer(id, targetLayer, insertIndex = -1) {
     const blocks = editingBlocks();
     if (!blocks || !blocks.blocks[id]) return;
     blocks.blocks[id].layer = targetLayer;
+    if (isCustomId(id)) {
+        if (targetLayer === 'message') {
+            blocks.blocks[id].placement = blocks.blocks[id].placement === 'tail' ? 'tail' : 'cached';
+        } else {
+            delete blocks.blocks[id].placement;
+        }
+    }
     blocks.order = blocks.order.filter(x => x !== id);
+    blocks.messageOrder = ensureMessageOrder(blocks).filter(x => x !== id);
     if (targetLayer === 'system') {
         if (insertIndex >= 0 && insertIndex <= blocks.order.length) {
             blocks.order.splice(insertIndex, 0, id);
         } else {
             blocks.order.push(id);
+        }
+    } else {
+        if (insertIndex >= 0 && insertIndex <= blocks.messageOrder.length) {
+            blocks.messageOrder.splice(insertIndex, 0, id);
+        } else {
+            blocks.messageOrder.push(id);
         }
     }
     renderPresetEditor();
@@ -998,19 +1264,22 @@ function moveBlockLayer(id, targetLayer, insertIndex = -1) {
 }
 
 /**
- * Native HTML5 drag to reorder within System Layer and move cross-layer blocks
- * (`profile`) between System Layer and Message Layer. Keyboard/touch users have
- * ↑/↓ and → Message / ↑ System buttons covering the exact same actions.
+ * Native HTML5 drag to reorder within System Layer, within Message Layer
+ * (cached group), and across System ⇄ Message for cross-layer & custom blocks.
+ * Keyboard/touch users have ↑/↓ and → Message / ↑ System buttons covering the
+ * exact same actions.
  */
 function wireBlockDragging(systemHost, messageHost) {
     let draggingId = null;
     let draggingLayer = null;
     let snapshotOrder = null;
+    let snapshotMsgOrder = null;
     let snapshotLayer = null;
+    let snapshotPlacement = null;
     let dropped = false;
     let changed = false;
 
-    const isCrossLayer = (id) => (presetDefaults?.crossLayerBlockIds || []).includes(id);
+    const isCrossLayer = (id) => isCustomId(id) || (presetDefaults?.crossLayerBlockIds || ['persona', 'profile']).includes(id);
 
     const onDragStart = (e) => {
         const card = e.target.closest('.preset-block[draggable="true"]');
@@ -1020,7 +1289,9 @@ function wireBlockDragging(systemHost, messageHost) {
         draggingId = card.dataset.blockId;
         draggingLayer = card.dataset.layer;
         snapshotOrder = [...blocks.order];
+        snapshotMsgOrder = [...ensureMessageOrder(blocks)];
         snapshotLayer = blocks.blocks[draggingId]?.layer;
+        snapshotPlacement = blocks.blocks[draggingId]?.placement;
         dropped = false;
         changed = false;
         card.classList.add('dragging');
@@ -1033,27 +1304,33 @@ function wireBlockDragging(systemHost, messageHost) {
         const id = draggingId;
         systemHost.classList.remove('is-drop-target');
         if (messageHost) messageHost.classList.remove('is-drop-target');
+        if (volatileHost) volatileHost.classList.remove('is-drop-target');
         draggingId = null;
         draggingLayer = null;
 
         if (!dropped) {
-            // Cancelled drag (Escape or dropped outside valid zones): roll back
-            // any live preview reorder so aborting never commits mutations.
             const blocks = editingBlocks();
             if (blocks && snapshotOrder) {
                 blocks.order = snapshotOrder;
-                if (snapshotLayer !== undefined && blocks.blocks[id]) {
-                    blocks.blocks[id].layer = snapshotLayer;
+                if (snapshotMsgOrder) blocks.messageOrder = snapshotMsgOrder;
+                if (blocks.blocks[id]) {
+                    if (snapshotLayer !== undefined) blocks.blocks[id].layer = snapshotLayer;
+                    if (snapshotPlacement !== undefined) blocks.blocks[id].placement = snapshotPlacement;
+                    else if (isCustomId(id)) delete blocks.blocks[id].placement;
                 }
             }
             snapshotOrder = null;
+            snapshotMsgOrder = null;
             snapshotLayer = null;
+            snapshotPlacement = null;
             renderPresetEditor();
             return;
         }
 
         snapshotOrder = null;
+        snapshotMsgOrder = null;
         snapshotLayer = null;
+        snapshotPlacement = null;
         if (changed) {
             renderPresetEditor();
             queuePresetSave();
@@ -1063,12 +1340,11 @@ function wireBlockDragging(systemHost, messageHost) {
         }
     };
 
-    systemHost.addEventListener('dragstart', onDragStart);
-    systemHost.addEventListener('dragend', onDragEnd);
-    if (messageHost) {
-        messageHost.addEventListener('dragstart', onDragStart);
-        messageHost.addEventListener('dragend', onDragEnd);
-    }
+    const volatileHost = document.getElementById('presetMessageVolatileBlocks');
+    [systemHost, messageHost, volatileHost].filter(Boolean).forEach(host => {
+        host.addEventListener('dragstart', onDragStart);
+        host.addEventListener('dragend', onDragEnd);
+    });
 
     systemHost.addEventListener('dragover', (e) => {
         if (!draggingId) return;
@@ -1076,14 +1352,16 @@ function wireBlockDragging(systemHost, messageHost) {
         e.preventDefault();
         systemHost.classList.add('is-drop-target');
         if (messageHost) messageHost.classList.remove('is-drop-target');
+        if (volatileHost) volatileHost.classList.remove('is-drop-target');
 
         const blocks = editingBlocks();
         if (!blocks) return;
         const over = e.target.closest('#presetSystemBlocks > .preset-block[data-block-id]');
 
-        // Cross-layer drag preview into System Layer
         if (draggingLayer !== 'system') {
             blocks.blocks[draggingId].layer = 'system';
+            if (isCustomId(draggingId)) delete blocks.blocks[draggingId].placement;
+            blocks.messageOrder = ensureMessageOrder(blocks).filter(x => x !== draggingId);
             blocks.order = blocks.order.filter(x => x !== draggingId);
             const targetIdx = over ? blocks.order.indexOf(over.dataset.blockId) : blocks.order.length;
             blocks.order.splice(targetIdx >= 0 ? targetIdx : blocks.order.length, 0, draggingId);
@@ -1132,6 +1410,44 @@ function wireBlockDragging(systemHost, messageHost) {
             e.preventDefault();
             messageHost.classList.add('is-drop-target');
             systemHost.classList.remove('is-drop-target');
+            if (volatileHost) volatileHost.classList.remove('is-drop-target');
+
+            const blocks = editingBlocks();
+            if (!blocks) return;
+            const over = e.target.closest('#presetMessageCachedBlocks > .preset-block[draggable="true"]');
+            const msgOrder = ensureMessageOrder(blocks);
+
+            if (draggingLayer !== 'message' || (isCustomId(draggingId) && blocks.blocks[draggingId].placement === 'tail')) {
+                blocks.blocks[draggingId].layer = 'message';
+                if (isCustomId(draggingId)) blocks.blocks[draggingId].placement = 'cached';
+                blocks.order = blocks.order.filter(x => x !== draggingId);
+                blocks.messageOrder = msgOrder.filter(x => x !== draggingId);
+                const targetIdx = over ? blocks.messageOrder.indexOf(over.dataset.blockId) : blocks.messageOrder.length;
+                blocks.messageOrder.splice(targetIdx >= 0 ? targetIdx : blocks.messageOrder.length, 0, draggingId);
+                const dragged = elements.presetEditor.querySelector(`.preset-block[data-block-id="${CSS.escape(draggingId)}"]`);
+                if (dragged) {
+                    dragged.dataset.layer = 'message';
+                    dragged.dataset.placement = 'cached';
+                    const anchor = over || messageHost.querySelector('.preset-block-info');
+                    if (anchor) anchor.before(dragged);
+                    else messageHost.appendChild(dragged);
+                }
+                draggingLayer = 'message';
+                changed = true;
+                return;
+            }
+
+            if (!over || over.dataset.blockId === draggingId) return;
+            const from = msgOrder.indexOf(draggingId);
+            const to = msgOrder.indexOf(over.dataset.blockId);
+            if (from < 0 || to < 0) return;
+            msgOrder.splice(to, 0, msgOrder.splice(from, 1)[0]);
+            const dragged = messageHost.querySelector(`.preset-block[data-block-id="${CSS.escape(draggingId)}"]`);
+            if (dragged) {
+                if (from < to) over.after(dragged);
+                else over.before(dragged);
+            }
+            changed = true;
         });
         messageHost.addEventListener('dragleave', (e) => {
             if (!messageHost.contains(e.relatedTarget)) {
@@ -1141,14 +1457,72 @@ function wireBlockDragging(systemHost, messageHost) {
         messageHost.addEventListener('drop', (e) => {
             e.preventDefault();
             messageHost.classList.remove('is-drop-target');
-            if (!draggingId || !isCrossLayer(draggingId)) return;
-            dropped = true;
+            if (draggingId && isCrossLayer(draggingId)) {
+                dropped = true;
+            }
+        });
+    }
+
+    if (volatileHost) {
+        volatileHost.addEventListener('dragover', (e) => {
+            if (!draggingId || !isCustomId(draggingId)) return;
+            e.preventDefault();
+            volatileHost.classList.add('is-drop-target');
+            systemHost.classList.remove('is-drop-target');
+            if (messageHost) messageHost.classList.remove('is-drop-target');
+
             const blocks = editingBlocks();
-            if (!blocks || blocks.blocks[draggingId]?.layer === 'message') return;
-            blocks.blocks[draggingId].layer = 'message';
-            blocks.order = blocks.order.filter(x => x !== draggingId);
-            draggingLayer = 'message';
+            if (!blocks) return;
+            const over = e.target.closest('#presetMessageVolatileBlocks > .preset-block[draggable="true"]');
+            const msgOrder = ensureMessageOrder(blocks);
+
+            if (draggingLayer !== 'message' || blocks.blocks[draggingId].placement !== 'tail') {
+                blocks.blocks[draggingId].layer = 'message';
+                blocks.blocks[draggingId].placement = 'tail';
+                blocks.order = blocks.order.filter(x => x !== draggingId);
+                blocks.messageOrder = msgOrder.filter(x => x !== draggingId);
+                const targetIdx = over ? blocks.messageOrder.indexOf(over.dataset.blockId) : blocks.messageOrder.length;
+                blocks.messageOrder.splice(targetIdx >= 0 ? targetIdx : blocks.messageOrder.length, 0, draggingId);
+                const dragged = elements.presetEditor.querySelector(`.preset-block[data-block-id="${CSS.escape(draggingId)}"]`);
+                if (dragged) {
+                    dragged.dataset.layer = 'message';
+                    dragged.dataset.placement = 'tail';
+                    if (over) over.before(dragged);
+                    else if (blocks.blocks.state?.position === 'after') volatileHost.appendChild(dragged);
+                    else {
+                        const latest = volatileHost.querySelector('.preset-block-info');
+                        if (latest) latest.before(dragged);
+                        else volatileHost.appendChild(dragged);
+                    }
+                }
+                draggingLayer = 'message';
+                changed = true;
+                return;
+            }
+
+            if (!over || over.dataset.blockId === draggingId) return;
+            const from = msgOrder.indexOf(draggingId);
+            const to = msgOrder.indexOf(over.dataset.blockId);
+            if (from < 0 || to < 0) return;
+            msgOrder.splice(to, 0, msgOrder.splice(from, 1)[0]);
+            const dragged = volatileHost.querySelector(`.preset-block[data-block-id="${CSS.escape(draggingId)}"]`);
+            if (dragged) {
+                if (from < to) over.after(dragged);
+                else over.before(dragged);
+            }
             changed = true;
+        });
+        volatileHost.addEventListener('dragleave', (e) => {
+            if (!volatileHost.contains(e.relatedTarget)) {
+                volatileHost.classList.remove('is-drop-target');
+            }
+        });
+        volatileHost.addEventListener('drop', (e) => {
+            e.preventDefault();
+            volatileHost.classList.remove('is-drop-target');
+            if (draggingId && isCustomId(draggingId)) {
+                dropped = true;
+            }
         });
     }
 }
@@ -1412,7 +1786,7 @@ const EXCLUSION_REASONS = {
     'profile-off': 'this persona is set not to see your profile',
     'bare-chat': 'omitted on bare chats (no workspace, tools, scratchpad, or chat files)',
     'no-session-state': 'no session state was resolved for this request',
-    'no-context': 'this chat has no leading profile or workspace context',
+    'no-context': 'this chat has no leading context blocks',
     empty: 'the text is empty',
 };
 
@@ -1494,7 +1868,7 @@ export async function renderPromptInspector(host, { presetId } = {}) {
     const blockHTML = (b) => `
             <details class="inspector-block">
                 <summary>
-                    <span class="inspector-block-name">${escapeHtml(blockLabel(b.id))}</span>
+                    <span class="inspector-block-name">${escapeHtml(blockLabel(b))}</span>
                     <span class="inspector-source source-${escapeHtml(b.source)}">${escapeHtml(SOURCE_LABELS[b.source] || b.source)}</span>
                     <span class="inspector-chars">${b.chars.toLocaleString()}</span>
                 </summary>
@@ -1516,13 +1890,17 @@ export async function renderPromptInspector(host, { presetId } = {}) {
             <p class="preset-group-label">Not sent this time</p>
             <ul class="inspector-excluded">
                 ${excluded.map(b => `
-                    <li><strong>${escapeHtml(blockLabel(b.id))}</strong> — ${escapeHtml(EXCLUSION_REASONS[b.reason] || b.reason)}</li>`).join('')}
+                    <li><strong>${escapeHtml(blockLabel(b))}</strong> — ${escapeHtml(EXCLUSION_REASONS[b.reason] || b.reason)}</li>`).join('')}
             </ul>`}`;
 }
 
-/** Human label for a block id, reusing the editor's copy. */
-function blockLabel(id) {
-    return (BLOCK_INFO[id] || {}).label || id;
+/** Human label for a block provenance entry or id. */
+function blockLabel(blockOrId) {
+    if (blockOrId && typeof blockOrId === 'object') {
+        if (blockOrId.name) return blockOrId.name;
+        return (BLOCK_INFO[blockOrId.id] || {}).label || blockOrId.id;
+    }
+    return (BLOCK_INFO[blockOrId] || {}).label || blockOrId;
 }
 
 /** One line naming what this preview was assembled against. */

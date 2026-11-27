@@ -592,40 +592,43 @@ function pickActiveConversation() {
 function syncAutoTitleSource() {
     const el = elements.autoTitleSource;
     if (!el) return;
+    if (state.settings.autoTitle === false) {
+        el.textContent = 'Off';
+        return;
+    }
     const aux = state.settings.auxModel;
     if (!aux) {
-        el.innerHTML = 'Using <strong>first-message preview</strong> · pick an aux model in <strong>Models</strong> for topic titles.';
+        el.innerHTML = 'Using <strong>first-message preview</strong> · set an aux model in <strong>Models</strong>.';
         return;
     }
     const known = (state.settings.customModels[aux.provider] || []).find(m => m.id === aux.model);
     const label = known ? known.name : aux.model;
-    el.innerHTML = `Using aux model <strong>${escapeHtml(label)}</strong> · falls back to first-message preview on error.`;
+    el.innerHTML = `Using aux model <strong>${escapeHtml(label)}</strong>.`;
 }
 
 /**
- * Say how avatar expressions are currently chosen (inline main-model tags vs
- * aux-model picking) and what is still needed if the toggle is on without a
- * usable aux model.
+ * Say how avatar expressions are currently controlled (main model vs aux model)
+ * without leaking internal tag syntax into the setting description.
  */
 function syncAuxExpressionsSource() {
     const el = elements.auxExpressionsSource;
     if (!el) return;
     if (!state.settings.auxExpressions) {
-        el.innerHTML = 'Currently using inline <code>[expression: name]</code> tags.';
+        el.innerHTML = '<strong>Using main model</strong>';
         return;
     }
     const aux = state.settings.auxModel;
     if (!aux) {
-        el.innerHTML = 'No aux model set yet — still using inline tags. Pick one in <strong>Models</strong> (⋯ → "Use as aux model").';
+        el.innerHTML = '<strong>Using main model</strong> · set an aux model in <strong>Models</strong> to switch.';
         return;
     }
     const known = (state.settings.customModels[aux.provider] || []).find(m => m.id === aux.model);
     const label = known ? known.name : aux.model;
     if (!state.apiKeyStatus[aux.provider]?.hasKey) {
-        el.innerHTML = `Aux model <strong>${escapeHtml(label)}</strong> has no API key yet — still using inline tags.`;
+        el.innerHTML = `<strong>Using main model</strong> · add an API key for ${escapeHtml(label)} to switch.`;
         return;
     }
-    el.innerHTML = `Picked by aux model <strong>${escapeHtml(label)}</strong> after each reply.`;
+    el.innerHTML = `<strong>Using aux model</strong> (${escapeHtml(label)})`;
 }
 
 function syncActiveFileTurnsStepper(raw) {
@@ -1454,6 +1457,7 @@ function setupEventListeners() {
     if (elements.autoTitleToggle) {
         elements.autoTitleToggle.addEventListener('change', () => {
             state.settings.autoTitle = elements.autoTitleToggle.checked;
+            syncAutoTitleSource();
             autoSaveSettings();
         });
     }
@@ -1703,15 +1707,32 @@ function setupEventListeners() {
         e.target.value = ''; // Reset so same file can be re-selected
     });
 
-    // Drag and drop on chat area
+    // Drag and drop files on chat area. Guard on BOTH active chat view AND real
+    // OS file drags (`Files` in dataTransfer.types) so dragging internal UI
+    // cards (e.g. prompt preset blocks in Settings) never triggers the chat
+    // attachment overlay or steals drop events.
     let dragCounter = 0;
+    const isChatFileDrag = (e) => {
+        if ((state.ui.mainView || {}).type !== 'chat') return false;
+        const types = e.dataTransfer?.types;
+        return Boolean(types && Array.from(types).includes('Files'));
+    };
+
     elements.chatArea.addEventListener('dragenter', (e) => {
+        if (!isChatFileDrag(e)) return;
         e.preventDefault();
         dragCounter++;
         elements.dragOverlay.classList.add('visible');
     });
 
     elements.chatArea.addEventListener('dragleave', (e) => {
+        if (!isChatFileDrag(e)) {
+            if (dragCounter > 0) {
+                dragCounter = 0;
+                elements.dragOverlay.classList.remove('visible');
+            }
+            return;
+        }
         e.preventDefault();
         dragCounter--;
         if (dragCounter <= 0) {
@@ -1721,10 +1742,18 @@ function setupEventListeners() {
     });
 
     elements.chatArea.addEventListener('dragover', (e) => {
+        if (!isChatFileDrag(e)) return;
         e.preventDefault();
     });
 
     elements.chatArea.addEventListener('drop', (e) => {
+        if (!isChatFileDrag(e)) {
+            if (dragCounter > 0) {
+                dragCounter = 0;
+                elements.dragOverlay.classList.remove('visible');
+            }
+            return;
+        }
         e.preventDefault();
         dragCounter = 0;
         elements.dragOverlay.classList.remove('visible');
