@@ -47,6 +47,17 @@ How we work (branches, verification, merging, wrap-up) lives in
 > with hyphenated/last-tag-wins support and friendly scratchpad/move tool chips, and added
 > opt-in aux-model expression picking (migration 017, Settings → Advanced toggle,
 > `POST /api/conversations/:id/expression`).
+> 2026-11-26: shipped Settings redesign & font-switching stability (UIP-09, #245) and the
+> Defaults v2 series (DF-01…04, #246–#249): starter persona **Soli** (`Companion`) with true
+> unset model default (`provider: null, model: null`) and auto-activating first model; lean
+> XML-delimited v2 prompt & context architecture (`<operating_environment>`, `<main_persona>`,
+> protected `<capabilities>`, Message-layer `<user_profile>`, voice-neutral `Reference context
+> noted.`, `<current_context>` prepended ahead of the latest user message and omitted on bare
+> chats); expanded Workbench-style Prompt Preset Editor UI with System/Message layers, cache
+> boundary divider, pre-filled auto-sizing textareas, read-only `<capabilities>` inspection,
+> `Before`/`After` toggle, `+ Add block` / `Remove block` custom blocks in both layers,
+> cross-layer `Persona prompt`, fixed file-drop overlay conflict during drag-and-drop, and
+> simplified Automation settings copy (`Auto-name chats`, `Avatar expression system`).
 
 ---
 
@@ -231,35 +242,27 @@ the persona prompt instead of complementing it. Don't rebuild it.
 
 ## 5. How a prompt is assembled
 
-**System layer** (server-side, `prompts/presets.js`), default order:
+**System layer** (server-side, `prompts/presets.js` + `prompts/tessera.js`, cached prefix), default order (DF-02 / DF-04):
 
-1. `orientation` — Solier's base framing (`prompts/tessera.js`)
-2. `profile` — the user's profile, if present and not switched off for this persona
-3. `expressions` — the expression protocol, generated from the persona's real set (omitted with reason `aux-expressions` when opt-in aux-model expression picking is active and an aux model + API key are configured)
-4. `scratchpad` — scratchpad instructions
-5. `persona` — position marker for the persona's own prompt, which the
-   **client** assembles from six sections (`js/persona-sections.js`:
-   Personality, Voice, Expertise, Relationship, Background, General guidance).
-   Each of the first five is its picked traits' sentences as one paragraph
-   (`js/persona-traits.js`, the library; customised picks use their own
-   text), then the section's own text as the next paragraph.
+1. `orientation` — `<operating_environment>`: what Solier is and `<tool_trail>` mechanics, without imposing generic-assistant rules onto quirky/RP personas.
+2. `persona` — `<main_persona>` auto-wrapping `# Persona: {{char}}` + the persona's assembled prompt from six sections (`js/persona-sections.js`: Personality, Voice, Expertise, Relationship, Background, General guidance; picked traits from `js/persona-traits.js` ahead of free-text). Switchable to the Message Layer via presets.
+3. `capabilities` — protected `<capabilities>` sub-layer wrapping whichever capabilities are active for this request (`## Workspace & Project`, `## File Tools` only when `toolsEnabled === true`, `## Scratchpad` when active, `## Avatar Expressions` when persona has expressions and aux expressions is off). Omitted completely when none are active; movable in order, server-managed wording.
 
-A **preset** can reword or reorder these blocks but can never enable a
-capability. Preset resolution: chat → persona → account default → built-in
-(`PRESET_NONE` opts out of an inherited one).
+**Message layer** (assembled per request, never persisted):
 
-**Message layer** (appended to the last user turn at send time, never
-persisted): `context_ack` and `state` (`<session_state>`: workspace / project /
-scratchpad / files, always all four keys, placed before `<active_files>` and
-`<scratchpad>`). The `state` block is plumbing — it can be moved but not edited
-or disabled.
+- **Cached prefix** (ahead of Conversation history, paired with Workspace/Project KB behind voice-neutral `context_ack` = `"Reference context noted."`):
+  - `profile` (`<user_profile>` with `# User: {{user}}` and enabled profile sections; movable to System Layer via presets).
+  - `persona` (if moved to Message Layer by a preset) and any user-added custom blocks with `placement: 'cached'`.
+  - Workspace & Project instructions and knowledge files (respecting per-file toggles and `<available_files>` provenance).
+- **Conversation history** — native `user` / `assistant` API turns (earlier replies carry a one-line `<tool_trail>` when tools ran).
+- **Volatile tail** (below the cache boundary, on the latest user turn only):
+  - `state` (`<current_context>` wrapping `<session_state>`, `<active_files>`, and `<scratchpad>`, omitted completely on bare chats). Prepended before the latest user message by default (`state.position: 'before'`), or appended after (`'after'`) via preset; protected/server-generated.
+  - Any user-added custom blocks with `placement: 'tail'`.
 
-**Context injection:** container instructions and knowledge files (respecting
-per-file toggles), the `<available_files>` manifest (with provenance), recently
-active chat files (auto/pin/mute), and the scratchpad.
+A **preset** can reword editable blocks, reorder blocks, move `persona` / `profile` / custom blocks across System and Message layers, add up to 16 custom blocks (`custom_*`) in either layer, and choose `Before` / `After` for `<current_context>`, but can never enable a capability or disable/edit protected blocks (`capabilities`, `state`). Preset resolution: chat → persona → account default → built-in (`PRESET_NONE` opts out of an inherited one).
 
 **Inspect it:** `POST /api/chat/preview`, or the assembled-prompt inspector in
-Advanced settings (shows which block every span came from).
+Advanced settings (shows which layer and block every span came from).
 
 ---
 
@@ -288,7 +291,7 @@ Status: ✅ shipped · 🟡 shipped, live check owed · 📐 designed, not built
 | Scratchpad | 🟡 | SP-01…05, #112–#116, #243 | `SCRATCHPAD_DESIGN.md` |
 | Context toggles (KB on/off, auto/pin/mute) | 🟡 | CT-01…06, #117–#123 | `CONTEXT_TOGGLES_DESIGN.md` |
 | Frontend refactor (`app.js` → modules) | ✅ | F-, R-, S-01, #124–#147 | `REFACTOR_PLAN.md` |
-| Advanced prompt presets + inspector | 🟡 | AP-01…06, #151–#156 | `ADVANCED_PROMPTS_PLAN.md` |
+| Advanced prompt presets + Workbench editor & inspector | ✅ (phone check owed) | AP-01…06, DF-03, DF-04, #151–#156, #248, #249 | `ADVANCED_PROMPTS_PLAN.md`, `DEFAULTS_V2_DESIGN.md` |
 | Shared form controls | ✅ | #157, #158 | — |
 | Streaming tool loop | ✅ live-verified | TS-01…06, #159–#161, #167–#171 | (in `../archive/HANDOFF_2026-07-31.md`) |
 | Session state + tool feedback | ✅ | SS-01…04, #162–#166 | `SESSION_STATE_DESIGN.md` |
@@ -304,7 +307,8 @@ Status: ✅ shipped · 🟡 shipped, live check owed · 📐 designed, not built
 | Persona notes (tier 2, aux-written) | 📐 | UP-05, UP-06 | `PROFILE_DESIGN.md` |
 | File digests | 📐 | — | `SESSION_STATE_DESIGN.md` §7 |
 | Tool trail in history | ✅ live-verified | TT-01…03, #214–#216, #218 | `TOOL_TRAIL_DESIGN.md` |
-| UI polish backlog | ✅ (UIP-01…08 ✅) | UIP-01…08, #230, #231, #233, #234, #235, #237, #238, #239 | `../UI_POLISH.md` |
+| UI polish backlog | ✅ (UIP-01…09 ✅) | UIP-01…09, #230, #231, #233, #234, #235, #237, #238, #239, #245 | `../UI_POLISH.md` |
+| Defaults v2 (Soli starter, unset model, v2 prompt & Workbench editor) | 🟡 (live send check owed) | DF-01…04, #246–#249 | `DEFAULTS_V2_DESIGN.md` |
 | Persona traits (ready-made, combinable, customisable) | ✅ (PT-06/07 later) | PT-01…05, #222–#226 | `PERSONA_TRAITS_DESIGN.md`, `PERSONA_TRAITS_LIBRARY.md` |
 | Docs consolidation + session workflow | ✅ | DOC-01…03, #204–#206 | `PROJECT.md`, `CLAUDE.md` |
 
@@ -357,15 +361,14 @@ server log and against Drive, not just from the model's reply:
 - [x] **Scratchpad adoption**: unprompted, both models wrote a plan to the pad, then made a targeted `edit_scratchpad` on a follow-up.
 - [x] **Context toggles**: auto and pin inject a chat file, mute keeps it out (still in `list_files`, readable); a knowledge file switched off for the chat leaves the content and stays named in `<available_files>`, and Haiku read it from there.
 - [x] **Tool trail** (TT-03), 2026-10-15, test account, four turns each on `claude-haiku-5-5` and `gemini-3.8-flash` (create + move, recall, edit, title): no "results I hadn't seen" apology, no tool re-runs, no `<tool_trail>` copied; both edits confirmed on Drive. It also showed a successful move saving no destination (a move is a file card), fixed in #218. One new doubt on Haiku, below.
-- [ ] **Advanced presets visual pass**: the prompt inspector, the block editor at narrow widths, the composer's preset pill. Only verified through the DOM so far.
+- [x] **Advanced presets visual pass (desktop + 390px mobile)**: verified the Workbench-style Prompt Preset Editor (DF-03/DF-04, #248–#249) and Prompt Inspector in headless Chromium at `1280×900` and `390×844` (still worth a real-phone touch check alongside UIP-03…09).
 - [ ] **Persona traits on a real phone** (PT-05, #226): build a persona with the
   trait picker on the phone (bottom-sheet picker, editing a sentence, Reset)
   and chat with it once; check the reply reflects the picks. Verified only in
   automated desktop/phone-width runs so far.
 - [ ] **Gemini 3.5+ trimmed body** (#217): one real send on `gemini-3.8-flash` (and `gemini-4-argon` if keyed) with tools off and thinking on Model default, then on Level; expect a normal reply. The body only lost fields, so low risk.
-- [ ] **UI polish visual pass on a real phone** (UIP-03…08, #233–#235, #237–#239): rail drawer & `Recent` chats list, contextual chat top bar + composer `Usage:` footer, Persona Editor 3-tab strip + Phone Strip A + Fixed-model picker, Persona card `Chat`/`Edit` actions + Workspace/Project auto-save, the 8 colour themes (`Parchment` default + tactile shadows), and the all-chats home-grouped Chats page (`In: <Home>`, filter bar, stepped expansion, group `+ New`). Verified in headless Chromium at `1280×820` and `390×844` so far.
-- [ ] **Onboard prompt skeleton & Option A expression streaming** (#243): real-key multi-round tool turn creating and editing the scratchpad (`write_scratchpad` / `edit_scratchpad`), confirming friendly tool chips, scratchpad adoption/editing, and zero mid-stream `[expression: ...]` leakage.
-- [ ] **Opt-in aux-model expressions (Option B)** (#243): real-key turn with Settings → Advanced **Avatar expressions** enabled and an aux model configured, confirming Prompt Preview excludes `expressions` (`aux-expressions`), `generating` holds until the aux pick lands, and aux usage records cleanly (including Gemini thinking aux models at `maxTokens: 128`).
+- [ ] **UI polish visual pass on a real phone** (UIP-03…09, #233–#235, #237–#239, #245): rail drawer & `Recent` chats list, contextual chat top bar + composer `Usage:` footer, Persona Editor 3-tab strip + Phone Strip A + Fixed-model picker, Persona card `Chat`/`Edit` actions + Workspace/Project auto-save, the 8 colour themes (`Parchment` default + tactile shadows), the all-chats home-grouped Chats page, and the redesigned Settings menu + font-switching stability. Verified in headless Chromium at `1280×900` and `390×844` so far.
+- [ ] **Defaults v2 & expression streaming live send check** (#243, #246–#249): real-key multi-round tool turn exercising the DF-02 XML prompt skeleton, `<capabilities>` tool/scratchpad gating, `<current_context>` prepending, friendly tool chips, and zero mid-stream `[expression: ...]` leakage; plus opt-in aux-model expressions (Option B) confirming Prompt Preview excludes `Avatar Expressions`, `generating` holds until the aux pick lands, and aux usage records cleanly.
 
 ### Deferred on purpose
 - **CF-02b** — PDFs as working files.
